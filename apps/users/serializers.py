@@ -12,11 +12,11 @@ class SendOTPSerializer(serializers.Serializer):
     phone = serializers.CharField(max_length=20)
 
     def validate_phone(self, value):
-        # Normalize: strip spaces, ensure starts with +998
-        value = value.strip().replace(' ', '')
-        if not value.startswith('+'):
-            value = '+' + value
-        return value
+        import re
+        value = re.sub(r'\D', '', value)
+        if value.startswith('998') and len(value) == 12:
+            return '+' + value
+        raise serializers.ValidationError('Поддерживаются только номера Узбекистана (например, +998901234567).')
 
 
 class VerifyOTPSerializer(serializers.Serializer):
@@ -24,10 +24,11 @@ class VerifyOTPSerializer(serializers.Serializer):
     code = serializers.CharField(max_length=6, min_length=6)
 
     def validate_phone(self, value):
-        value = value.strip().replace(' ', '')
-        if not value.startswith('+'):
-            value = '+' + value
-        return value
+        import re
+        value = re.sub(r'\D', '', value)
+        if value.startswith('998') and len(value) == 12:
+            return '+' + value
+        raise serializers.ValidationError('Поддерживаются только номера Узбекистана (например, +998901234567).')
 
 
 class TokenPairSerializer(serializers.Serializer):
