@@ -149,8 +149,8 @@ class PaymeWebhookView(APIView):
                     from apps.catalog.models import ItemAvailability
                     avail = ItemAvailability.objects.get(item=booking.item)
                     avail.unblock_range(booking.start_date, booking.end_date)
-                except Exception:
-                    pass
+                except Exception as exc:
+                    logger.error("Failed to unblock range: %s", exc)
 
             logger.warning('Payment cancelled (Payme): booking #%s, reason=%s', booking.pk, reason)
 
@@ -196,7 +196,7 @@ class ClickWebhookView(APIView):
             f"{data.get('action')}"
             f"{data.get('sign_time')}"
         )
-        expected = hashlib.md5(sign_string.encode()).hexdigest()
+        expected = hashlib.md5(sign_string.encode()).hexdigest()  # nosec B324
         return expected == data.get('sign_string', '')
 
     def post(self, request):

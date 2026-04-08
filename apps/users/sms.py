@@ -1,4 +1,3 @@
-import random
 import string
 import logging
 from django.conf import settings
@@ -6,7 +5,7 @@ import requests
 
 logger = logging.getLogger(__name__)
 
-ESKIZ_TOKEN_URL = 'https://notify.eskiz.uz/api/auth/login'
+ESKIZ_TOKEN_URL = 'https://notify.eskiz.uz/api/auth/login'  # nosec B105
 ESKIZ_SEND_URL = 'https://notify.eskiz.uz/api/message/sms/send'
 
 
@@ -55,4 +54,5 @@ def send_otp_sms(phone: str, code: str) -> bool:
 
 
 def generate_otp(length: int = 6) -> str:
-    return ''.join(random.choices(string.digits, k=length))
+    import secrets
+    return ''.join(secrets.choice(string.digits) for _ in range(length))

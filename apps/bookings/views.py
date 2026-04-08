@@ -200,7 +200,7 @@ class ComparePhotosAIView(APIView):
         # and get exact match score or defect mapping.
 
         # For MVP, we mock the damage score
-        score = round(random.uniform(0.7, 1.0), 2)
+        score = round(random.uniform(0.7, 1.0), 2)  # nosec B311
         flagged = score < 0.85
 
         return Response({
