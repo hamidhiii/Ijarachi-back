@@ -5,14 +5,14 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework.parsers import MultiPartParser, FormParser
 
-from .models import Booking, PhotoProtocol
+from .models import Booking, VerificationPhoto
 from .serializers import (
     BookingCreateSerializer,
     BookingListSerializer,
     BookingDetailSerializer,
     BookingStatusUpdateSerializer,
-    PhotoProtocolUploadSerializer,
-    PhotoProtocolSerializer,
+    VerificationPhotoUploadSerializer,
+    VerificationPhotoSerializer,
 )
 from apps.catalog.models import ItemAvailability
 
@@ -142,10 +142,10 @@ class BookingStatusUpdateView(APIView):
         return Response(BookingDetailSerializer(booking, context={'request': request}).data)
 
 
-class PhotoProtocolUploadView(APIView):
+class VerificationPhotoUploadView(APIView):
     """
     POST /api/v1/bookings/{id}/photos/
-    Загрузка фото «до» или «после».
+    Загрузка фото верификации с метаданными.
     """
     permission_classes = [permissions.IsAuthenticated]
     parser_classes = [MultiPartParser, FormParser]
@@ -164,18 +164,49 @@ class PhotoProtocolUploadView(APIView):
         if not booking:
             return Response({'detail': 'Бронирование не найдено.'}, status=status.HTTP_404_NOT_FOUND)
 
-        serializer = PhotoProtocolUploadSerializer(
+        serializer = VerificationPhotoUploadSerializer(
             data=request.data,
             context={'booking': booking, 'request': request},
         )
         serializer.is_valid(raise_exception=True)
         photo = serializer.save()
-        return Response(PhotoProtocolSerializer(photo, context={'request': request}).data, status=status.HTTP_201_CREATED)
+        return Response(VerificationPhotoSerializer(photo, context={'request': request}).data, status=status.HTTP_201_CREATED)
 
     def get(self, request, pk):
         booking = self.get_booking(pk, request.user)
         if not booking:
             return Response({'detail': 'Бронирование не найдено.'}, status=status.HTTP_404_NOT_FOUND)
 
-        photos = booking.photos.all()
-        return Response(PhotoProtocolSerializer(photos, many=True, context={'request': request}).data)
+        photos = booking.verification_photos.all()
+        return Response(VerificationPhotoSerializer(photos, many=True, context={'request': request}).data)
+
+class ComparePhotosAIView(APIView):
+    """
+    POST /api/v1/bookings/ai-compare/
+    Mocked Vision API endpoint.
+    Expecting: { "photo1_id": int, "photo2_id": int }
+    """
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request):
+        import random
+        photo1_id = request.data.get('photo1_id')
+        photo2_id = request.data.get('photo2_id')
+
+        if not photo1_id or not photo2_id:
+            return Response({'detail': 'Укажите ID двух фото.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        # In a real scenario, fetch photos from AWS/S3, pass them to OpenAI Vision or AWS Rekognition
+        # and get exact match score or defect mapping.
+
+        # For MVP, we mock the damage score
+        score = round(random.uniform(0.7, 1.0), 2)
+        flagged = score < 0.85
+
+        return Response({
+            'photo1_id': photo1_id,
+            'photo2_id': photo2_id,
+            'damage_score': score,
+            'flagged': flagged,
+            'message': 'Модель завершила анализ.'
+        })

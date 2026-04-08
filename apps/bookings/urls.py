@@ -4,13 +4,17 @@ from .views import (
     MyRentalsView,
     BookingDetailView,
     BookingStatusUpdateView,
-    PhotoProtocolUploadView,
+    VerificationPhotoUploadView,
+    ComparePhotosAIView,
 )
 
+app_name = 'bookings'
+
 urlpatterns = [
-    path('bookings/create/', BookingCreateView.as_view(), name='booking-create'),
-    path('bookings/<int:pk>/', BookingDetailView.as_view(), name='booking-detail'),
-    path('bookings/<int:pk>/status/', BookingStatusUpdateView.as_view(), name='booking-status'),
-    path('bookings/<int:pk>/photos/', PhotoProtocolUploadView.as_view(), name='booking-photos'),
-    path('my-rentals/', MyRentalsView.as_view(), name='my-rentals'),
+    path('create/', BookingCreateView.as_view(), name='create'),
+    path('my/', MyRentalsView.as_view(), name='my-rentals'),
+    path('<int:pk>/', BookingDetailView.as_view(), name='detail'),
+    path('<int:pk>/status/', BookingStatusUpdateView.as_view(), name='status-update'),
+    path('<int:pk>/verification-photos/', VerificationPhotoUploadView.as_view(), name='verification-photos'),
+    path('ai-compare/', ComparePhotosAIView.as_view(), name='ai-compare'),
 ]

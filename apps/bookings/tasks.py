@@ -104,3 +104,30 @@ def release_escrow(self, booking_id: int):
     except Exception as exc:
         logger.error('release_escrow failed for booking #%s: %s', booking_id, exc)
         raise self.retry(exc=exc)
+
+
+@shared_task(bind=True)
+def auto_complete_inspections(self):
+    """
+    Cron task running hourly.
+    Automatically closes bookings in INSPECTION status if 24 hours have passed without action.
+    """
+    try:
+        from datetime import timedelta
+        from django.utils import timezone
+        from apps.bookings.models import Booking
+
+        threshold = timezone.now() - timedelta(hours=24)
+        expired_bookings = Booking.objects.filter(
+            status=Booking.STATUS_INSPECTION,
+            updated_at__lt=threshold,
+        )
+
+        for booking in expired_bookings:
+            logger.warning('Auto-completing inspection for booking #%s after 24h timeout.', booking.pk)
+            booking.transition_to(Booking.STATUS_COMPLETED)
+            release_escrow.delay(booking.pk)
+    
+    except Exception as exc:
+        logger.error('auto_complete_inspections failed: %s', exc)
+        raise self.retry(exc=exc)

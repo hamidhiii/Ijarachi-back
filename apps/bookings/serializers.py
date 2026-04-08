@@ -1,7 +1,7 @@
 from decimal import Decimal
 from django.conf import settings
 from rest_framework import serializers
-from .models import Booking, PhotoProtocol
+from .models import Booking, VerificationPhoto
 from apps.catalog.models import Item
 
 
@@ -55,7 +55,7 @@ class BookingCreateSerializer(serializers.ModelSerializer):
             commission_amount=commission,
             total_price=total,
             renter_comment=validated_data.get('renter_comment', ''),
-            status=Booking.STATUS_WAITING_PAYMENT,
+            status=Booking.STATUS_CREATED,
         )
         return booking
 
@@ -91,18 +91,18 @@ class BookingDetailSerializer(serializers.ModelSerializer):
         read_only_fields = ['renter', 'price_per_day', 'deposit_amount', 'commission_amount', 'total_price']
 
     def get_photos(self, obj):
-        return PhotoProtocolSerializer(obj.photos.all(), many=True, context=self.context).data
+        return VerificationPhotoSerializer(obj.verification_photos.all(), many=True, context=self.context).data
 
 
 class BookingStatusUpdateSerializer(serializers.Serializer):
     """For status transitions by owner or renter."""
     ALLOWED_TRANSITIONS = {
-        # (current_status, role) → allowed next statuses
-        (Booking.STATUS_WAITING_PAYMENT, 'renter'): [Booking.STATUS_CANCELLED],
-        (Booking.STATUS_PAID_ESCROW, 'owner'): [Booking.STATUS_ACTIVE],
-        (Booking.STATUS_ACTIVE, 'owner'): [Booking.STATUS_RETURNING],
-        (Booking.STATUS_RETURNING, 'renter'): [Booking.STATUS_COMPLETED, Booking.STATUS_DISPUTE],
-        (Booking.STATUS_RETURNING, 'owner'): [Booking.STATUS_DISPUTE],
+        (Booking.STATUS_CREATED, 'renter'): [Booking.STATUS_CANCELLED],
+        (Booking.STATUS_WAITING_OWNER, 'owner'): [Booking.STATUS_WAITING_RENTER, Booking.STATUS_CANCELLED],
+        (Booking.STATUS_WAITING_RENTER, 'renter'): [Booking.STATUS_IN_RENT, Booking.STATUS_DISPUTE],
+        (Booking.STATUS_IN_RENT, 'renter'): [Booking.STATUS_RETURNING],
+        (Booking.STATUS_RETURNING, 'owner'): [Booking.STATUS_INSPECTION, Booking.STATUS_DISPUTE],
+        (Booking.STATUS_INSPECTION, 'owner'): [Booking.STATUS_COMPLETED, Booking.STATUS_DISPUTE],
     }
 
     status = serializers.ChoiceField(choices=Booking.STATUS_CHOICES)
@@ -124,33 +124,77 @@ class BookingStatusUpdateSerializer(serializers.Serializer):
             raise serializers.ValidationError(
                 f'Переход из "{booking.status}" в "{new_status}" не разрешён для роли "{role}".'
             )
+            
+        # Checks for Minimum 5 photos
+        if new_status == Booking.STATUS_WAITING_RENTER:
+            count = booking.verification_photos.filter(photo_type=VerificationPhoto.TYPE_OWNER_START).count()
+            if count < 5:
+                raise serializers.ValidationError(f'Для передачи требуется минимум 5 фото от владельца. Загружено: {count}.')
+                
+        if new_status == Booking.STATUS_IN_RENT:
+            count = booking.verification_photos.filter(photo_type=VerificationPhoto.TYPE_RENTER_START).count()
+            if count < 5:
+                raise serializers.ValidationError(f'Для старта аренды требуется минимум 5 фото от арендатора. Загружено: {count}.')
+                
+        if new_status == Booking.STATUS_RETURNING:
+            count = booking.verification_photos.filter(photo_type=VerificationPhoto.TYPE_RENTER_END).count()
+            if count < 5:
+                raise serializers.ValidationError(f'Для возврата требуется минимум 5 фото ПОСЛЕ от арендатора. Загружено: {count}.')
+
         return new_status
 
 
-class PhotoProtocolSerializer(serializers.ModelSerializer):
+class VerificationPhotoSerializer(serializers.ModelSerializer):
     class Meta:
-        model = PhotoProtocol
-        fields = ['id', 'photo_type', 'image', 'uploaded_at', 'comment']
-        read_only_fields = ['id', 'uploaded_at']
+        model = VerificationPhoto
+        fields = ['id', 'photo_type', 'image', 'file_hash', 'metadata', 'uploaded_at', 'comment']
+        read_only_fields = ['id', 'file_hash', 'uploaded_at']
 
 
-class PhotoProtocolUploadSerializer(serializers.ModelSerializer):
+class VerificationPhotoUploadSerializer(serializers.ModelSerializer):
     class Meta:
-        model = PhotoProtocol
-        fields = ['photo_type', 'image', 'comment']
+        model = VerificationPhoto
+        fields = ['photo_type', 'image', 'metadata', 'comment']
+
+    def validate_metadata(self, value):
+        required_keys = {'lat', 'lng', 'device_time'}
+        if not required_keys.issubset(value.keys()):
+            raise serializers.ValidationError(f'Метаданные должны содержать: {required_keys}')
+        return value
 
     def validate(self, data):
         booking = self.context['booking']
         photo_type = data['photo_type']
 
-        if photo_type == PhotoProtocol.TYPE_BEFORE and booking.status != Booking.STATUS_PAID_ESCROW:
-            raise serializers.ValidationError('Фото "до" можно загрузить только при статусе "paid_escrow".')
-        if photo_type == PhotoProtocol.TYPE_AFTER and booking.status != Booking.STATUS_RETURNING:
-            raise serializers.ValidationError('Фото "после" можно загрузить только при статусе "returning".')
+        valid_map = {
+            VerificationPhoto.TYPE_OWNER_START: Booking.STATUS_WAITING_OWNER,
+            VerificationPhoto.TYPE_RENTER_START: Booking.STATUS_WAITING_RENTER,
+            VerificationPhoto.TYPE_RENTER_END: Booking.STATUS_IN_RENT,
+            VerificationPhoto.TYPE_OWNER_END: [Booking.STATUS_RETURNING, Booking.STATUS_INSPECTION, Booking.STATUS_DISPUTE],
+        }
+        
+        allowed_status = valid_map.get(photo_type)
+        if isinstance(allowed_status, list):
+            if booking.status not in allowed_status:
+                raise serializers.ValidationError(f'Фото "{photo_type}" нельзя загружать на этапе "{booking.status}".')
+        else:
+            if booking.status != allowed_status:
+                raise serializers.ValidationError(f'Фото "{photo_type}" можно загрузить только на этапе "{allowed_status}".')
+
         return data
 
     def create(self, validated_data):
-        return PhotoProtocol.objects.create(
+        import hashlib
+        image = validated_data['image']
+        
+        # Calculate SHA-256 Hash
+        sha256_hash = hashlib.sha256()
+        for chunk in image.chunks():
+            sha256_hash.update(chunk)
+        
+        validated_data['file_hash'] = sha256_hash.hexdigest()
+
+        return VerificationPhoto.objects.create(
             booking=self.context['booking'],
             uploaded_by=self.context['request'].user,
             **validated_data,

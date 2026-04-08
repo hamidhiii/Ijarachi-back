@@ -114,7 +114,7 @@ class PaymeWebhookView(APIView):
             payment.save(update_fields=['status', 'updated_at'])
 
             booking = payment.booking
-            booking.transition_to(Booking.STATUS_PAID_ESCROW)
+            booking.transition_to(Booking.STATUS_WAITING_OWNER)
 
             logger.info(
                 'Payment confirmed (Payme): booking #%s, amount=%s tiyin',
@@ -142,7 +142,7 @@ class PaymeWebhookView(APIView):
             payment.save(update_fields=['status', 'updated_at'])
 
             booking = payment.booking
-            if booking.status in (Booking.STATUS_WAITING_PAYMENT, Booking.STATUS_PAID_ESCROW):
+            if booking.status in (Booking.STATUS_WAITING_PAYMENT, Booking.STATUS_WAITING_OWNER):
                 booking.transition_to(Booking.STATUS_CANCELLED)
                 # Unblock dates
                 try:
@@ -248,7 +248,7 @@ class ClickWebhookView(APIView):
             with transaction.atomic():
                 payment.status = Payment.STATUS_PAID
                 payment.save(update_fields=['status', 'updated_at'])
-                booking.transition_to(Booking.STATUS_PAID_ESCROW)
+                booking.transition_to(Booking.STATUS_WAITING_OWNER)
                 logger.info('Payment confirmed (Click): booking #%s', booking.pk)
 
             return Response({

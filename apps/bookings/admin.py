@@ -1,12 +1,12 @@
 from django.contrib import admin
-from .models import Booking, PhotoProtocol
+from .models import Booking, VerificationPhoto
 from apps.payments.models import Payment
 
 
-class PhotoProtocolInline(admin.TabularInline):
-    model = PhotoProtocol
+class VerificationPhotoInline(admin.TabularInline):
+    model = VerificationPhoto
     extra = 0
-    readonly_fields = ['uploaded_by', 'uploaded_at']
+    readonly_fields = ['file_hash', 'uploaded_by', 'uploaded_at']
 
 
 class PaymentInline(admin.TabularInline):
@@ -23,7 +23,7 @@ class BookingAdmin(admin.ModelAdmin):
     search_fields = ['item__title', 'renter__phone']
     raw_id_fields = ['item', 'renter']
     readonly_fields = ['price_per_day', 'deposit_amount', 'commission_amount', 'total_price', 'created_at', 'updated_at']
-    inlines = [PhotoProtocolInline, PaymentInline]
+    inlines = [VerificationPhotoInline, PaymentInline]
     fieldsets = (
         ('Сделка', {'fields': ('item', 'renter', 'status', 'renter_comment')}),
         ('Даты', {'fields': ('start_date', 'end_date')}),

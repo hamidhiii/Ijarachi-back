@@ -5,21 +5,23 @@ from django.utils import timezone
 
 class Booking(models.Model):
     STATUS_CREATED = 'created'
-    STATUS_WAITING_PAYMENT = 'waiting_payment'
-    STATUS_PAID_ESCROW = 'paid_escrow'
-    STATUS_ACTIVE = 'active'
+    STATUS_WAITING_OWNER = 'waiting_owner'
+    STATUS_WAITING_RENTER = 'waiting_renter'
+    STATUS_IN_RENT = 'in_rent'
     STATUS_RETURNING = 'returning'
+    STATUS_INSPECTION = 'inspection'
     STATUS_COMPLETED = 'completed'
     STATUS_DISPUTE = 'dispute'
     STATUS_CANCELLED = 'cancelled'
 
     STATUS_CHOICES = [
-        (STATUS_CREATED, 'Создано'),
-        (STATUS_WAITING_PAYMENT, 'Ожидает оплаты'),
-        (STATUS_PAID_ESCROW, 'Оплачено (эскроу)'),
-        (STATUS_ACTIVE, 'Активно (вещь у арендатора)'),
-        (STATUS_RETURNING, 'Возврат'),
-        (STATUS_COMPLETED, 'Завершено'),
+        (STATUS_CREATED, 'Оплачено (Эскроу)'),
+        (STATUS_WAITING_OWNER, 'Ожидает 5 фото от владельца'),
+        (STATUS_WAITING_RENTER, 'Ожидает 5 фото и подтверждения от арендатора'),
+        (STATUS_IN_RENT, 'Активная аренда'),
+        (STATUS_RETURNING, 'Возвращается (получены фото ПОСЛЕ от арендатора)'),
+        (STATUS_INSPECTION, 'Проверка (24ч у владельца)'),
+        (STATUS_COMPLETED, 'Завершено (деньги выплачиваются)'),
         (STATUS_DISPUTE, 'Спор'),
         (STATUS_CANCELLED, 'Отменено'),
     ]
@@ -72,31 +74,39 @@ class Booking(models.Model):
         logger.info('Booking #%s: %s → %s', self.pk, old, new_status)
 
 
-class PhotoProtocol(models.Model):
-    TYPE_BEFORE = 'before'
-    TYPE_AFTER = 'after'
+class VerificationPhoto(models.Model):
+    TYPE_OWNER_START = 'owner_start'
+    TYPE_RENTER_START = 'renter_start'
+    TYPE_RENTER_END = 'renter_end'
+    TYPE_OWNER_END = 'owner_end'
 
     TYPE_CHOICES = [
-        (TYPE_BEFORE, 'До передачи'),
-        (TYPE_AFTER, 'После возврата'),
+        (TYPE_OWNER_START, 'Владелец: До передачи'),
+        (TYPE_RENTER_START, 'Арендатор: До получения'),
+        (TYPE_RENTER_END, 'Арендатор: После возврата'),
+        (TYPE_OWNER_END, 'Владелец: После получения'),
     ]
 
-    booking = models.ForeignKey(Booking, on_delete=models.CASCADE, related_name='photos', verbose_name='Бронирование')
-    photo_type = models.CharField('Тип', max_length=10, choices=TYPE_CHOICES)
-    image = models.ImageField('Фото', upload_to='protocols/')
+    booking = models.ForeignKey(Booking, on_delete=models.CASCADE, related_name='verification_photos', verbose_name='Бронирование')
+    photo_type = models.CharField('Тип протокола', max_length=20, choices=TYPE_CHOICES)
+    image = models.ImageField('Фотография', upload_to='verifications/')
+    
+    file_hash = models.CharField('SHA-256 Хэш', max_length=64, help_text='Хэш для защиты от подмены')
+    metadata = models.JSONField('Метаданные (GPS, Device, Time)', default=dict)
+    
     uploaded_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         on_delete=models.SET_NULL,
         null=True,
-        related_name='uploaded_photos',
+        related_name='uploaded_verifications',
     )
     uploaded_at = models.DateTimeField(auto_now_add=True)
     comment = models.TextField('Комментарий', blank=True)
 
     class Meta:
-        verbose_name = 'Фотопротокол'
-        verbose_name_plural = 'Фотопротоколы'
+        verbose_name = 'Фото верификации'
+        verbose_name_plural = 'Фото верификации'
         ordering = ['uploaded_at']
 
     def __str__(self):
-        return f'Фото [{self.photo_type}] — Бронь #{self.booking_id}'
+        return f'Верификация [{self.photo_type}] — Бронь #{self.booking_id}'
