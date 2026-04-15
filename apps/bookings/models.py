@@ -41,11 +41,10 @@ class Booking(models.Model):
     start_date = models.DateField('Дата начала')
     end_date = models.DateField('Дата окончания')
 
-    # Pricing snapshot at booking time
-    price_per_day = models.DecimalField('Цена/день', max_digits=12, decimal_places=0)
-    deposit_amount = models.DecimalField('Залог', max_digits=12, decimal_places=0)
-    commission_amount = models.DecimalField('Комиссия платформы', max_digits=12, decimal_places=0)
-    total_price = models.DecimalField('Итого', max_digits=12, decimal_places=0)
+    # Pricing
+    price_per_day = models.DecimalField('Цена за сутки (владельца)', max_digits=12, decimal_places=0)
+    commission_amount = models.DecimalField('Комиссия платформы (15%)', max_digits=12, decimal_places=0)
+    total_price = models.DecimalField('Итого к оплате (арендатором)', max_digits=12, decimal_places=0)
 
     status = models.CharField('Статус', max_length=20, choices=STATUS_CHOICES, default=STATUS_CREATED)
     renter_comment = models.TextField('Комментарий арендатора', blank=True)

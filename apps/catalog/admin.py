@@ -1,4 +1,5 @@
 from django.contrib import admin
+from django.utils.translation import gettext_lazy as _
 from mptt.admin import DraggableMPTTAdmin
 from .models import Category, Item, ItemImage, ItemAvailability
 
@@ -20,29 +21,29 @@ class ItemImageInline(admin.TabularInline):
 
 @admin.register(Item)
 class ItemAdmin(admin.ModelAdmin):
-    list_display = ['title', 'owner', 'category', 'price_per_day', 'deposit', 'status', 'city', 'created_at']
+    list_display = ['title', 'category', 'owner', 'price_per_day', 'client_price_per_day', 'status', 'city']
     list_filter = ['status', 'condition', 'category', 'city']
     search_fields = ['title', 'description', 'owner__phone']
-    list_editable = ['status']
+    readonly_fields = ['client_price_per_day', 'created_at', 'updated_at']
     raw_id_fields = ['owner', 'category']
     inlines = [ItemImageInline]
-    readonly_fields = ['created_at', 'updated_at']
+    
     fieldsets = (
-        ('Основное', {'fields': ('owner', 'category', 'title', 'description', 'condition', 'status')}),
-        ('Цена', {'fields': ('price_per_day', 'deposit')}),
-        ('Локация', {'fields': ('city', 'address', 'latitude', 'longitude')}),
-        ('Даты', {'fields': ('created_at', 'updated_at')}),
+        (_('Main Information'), {'fields': ('owner', 'category', 'title', 'description', 'condition', 'status')}),
+        (_('Financials'), {'fields': ('price_per_day', 'client_price_per_day')}),
+        (_('Location'), {'fields': ('address', 'city', 'latitude', 'longitude')}),
+        (_('Timestamps'), {'fields': ('created_at', 'updated_at')}),
     )
 
     actions = ['activate', 'deactivate']
 
+    @admin.action(description=_('Activate selected items'))
     def activate(self, request, queryset):
         queryset.update(status=Item.STATUS_ACTIVE)
-    activate.short_description = 'Активировать выбранные объявления'
 
+    @admin.action(description=_('Deactivate selected items'))
     def deactivate(self, request, queryset):
         queryset.update(status=Item.STATUS_INACTIVE)
-    deactivate.short_description = 'Деактивировать выбранные объявления'
 
 
 @admin.register(ItemAvailability)
@@ -50,6 +51,6 @@ class ItemAvailabilityAdmin(admin.ModelAdmin):
     list_display = ['item', 'blocked_count']
     search_fields = ['item__title']
 
+    @admin.display(description=_('Blocked dates count'))
     def blocked_count(self, obj):
         return len(obj.blocked_dates)
-    blocked_count.short_description = 'Заблокировано дат'

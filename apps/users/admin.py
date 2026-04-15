@@ -1,5 +1,6 @@
 from django.contrib import admin
 from django.contrib.auth.admin import UserAdmin
+from django.utils.translation import gettext_lazy as _
 from .models import CustomUser, Profile, OTPCode, KYCDocument
 
 
@@ -11,9 +12,9 @@ class CustomUserAdmin(UserAdmin):
     ordering = ['-date_joined']
     fieldsets = (
         (None, {'fields': ('phone', 'password')}),
-        ('Personal info', {'fields': ('email',)}),
-        ('Permissions', {'fields': ('is_active', 'is_staff', 'is_superuser', 'groups', 'user_permissions')}),
-        ('Important dates', {'fields': ('last_login', 'date_joined')}),
+        (_('Personal Info'), {'fields': ('email',)}),
+        (_('Permissions'), {'fields': ('is_active', 'is_staff', 'is_superuser', 'groups', 'user_permissions')}),
+        (_('Important Dates'), {'fields': ('last_login', 'date_joined')}),
     )
     add_fieldsets = (
         (None, {
@@ -25,9 +26,16 @@ class CustomUserAdmin(UserAdmin):
 
 @admin.register(Profile)
 class ProfileAdmin(admin.ModelAdmin):
-    list_display = ['user', 'full_name', 'rating', 'verification_status']
-    list_filter = ['verification_status']
+    list_display = ['user', 'full_name', 'rating', 'verification_status', 'language']
+    list_filter = ['verification_status', 'language']
     search_fields = ['user__phone', 'full_name']
+    readonly_fields = ['rating', 'rating_count']
+    fieldsets = (
+        (None, {'fields': ('user', 'full_name', 'avatar')}),
+        (_('Rating & Stats'), {'fields': ('rating', 'rating_count')}),
+        (_('Verification'), {'fields': ('verification_status',)}),
+        (_('App Settings'), {'fields': ('fcm_token', 'language')}),
+    )
 
 
 @admin.register(OTPCode)
@@ -45,6 +53,7 @@ class KYCDocumentAdmin(admin.ModelAdmin):
     search_fields = ['user__phone']
     actions = ['approve', 'reject']
 
+    @admin.action(description=_('Approve selected KYC documents'))
     def approve(self, request, queryset):
         from django.utils import timezone
         from .models import Profile
@@ -53,9 +62,8 @@ class KYCDocumentAdmin(admin.ModelAdmin):
             Profile.objects.filter(user=kyc.user).update(
                 verification_status=Profile.VERIFICATION_VERIFIED
             )
-    approve.short_description = 'Одобрить выбранные KYC'
 
+    @admin.action(description=_('Reject selected KYC documents'))
     def reject(self, request, queryset):
         from django.utils import timezone
         queryset.update(status=KYCDocument.STATUS_REJECTED, reviewed_at=timezone.now())
-    reject.short_description = 'Отклонить выбранные KYC'

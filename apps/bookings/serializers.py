@@ -41,9 +41,9 @@ class BookingCreateSerializer(serializers.ModelSerializer):
         days = (end - start).days + 1
 
         commission_pct = Decimal(settings.PLATFORM_COMMISSION_PERCENT) / 100
-        rental_cost = item.price_per_day * days
-        commission = (rental_cost * commission_pct).quantize(Decimal('1'))
-        total = rental_cost + commission + item.deposit
+        rental_cost_owner = item.price_per_day * days
+        commission = (rental_cost_owner * commission_pct).quantize(Decimal('1'))
+        total = rental_cost_owner + commission
 
         booking = Booking.objects.create(
             renter=self.context['request'].user,
@@ -51,7 +51,6 @@ class BookingCreateSerializer(serializers.ModelSerializer):
             start_date=start,
             end_date=end,
             price_per_day=item.price_per_day,
-            deposit_amount=item.deposit,
             commission_amount=commission,
             total_price=total,
             renter_comment=validated_data.get('renter_comment', ''),
@@ -71,7 +70,7 @@ class BookingListSerializer(serializers.ModelSerializer):
         fields = [
             'id', 'item_id', 'item_title', 'renter_phone',
             'start_date', 'end_date', 'days',
-            'price_per_day', 'deposit_amount', 'commission_amount', 'total_price',
+            'price_per_day', 'commission_amount', 'total_price',
             'status', 'created_at',
         ]
 
@@ -85,10 +84,10 @@ class BookingDetailSerializer(serializers.ModelSerializer):
         fields = [
             'id', 'item', 'renter',
             'start_date', 'end_date', 'days',
-            'price_per_day', 'deposit_amount', 'commission_amount', 'total_price',
+            'price_per_day', 'commission_amount', 'total_price',
             'status', 'renter_comment', 'photos', 'created_at', 'updated_at',
         ]
-        read_only_fields = ['renter', 'price_per_day', 'deposit_amount', 'commission_amount', 'total_price']
+        read_only_fields = ['renter', 'price_per_day', 'commission_amount', 'total_price']
 
     def get_photos(self, obj):
         return VerificationPhotoSerializer(obj.verification_photos.all(), many=True, context=self.context).data
@@ -125,21 +124,21 @@ class BookingStatusUpdateSerializer(serializers.Serializer):
                 f'Переход из "{booking.status}" в "{new_status}" не разрешён для роли "{role}".'
             )
             
-        # Checks for Minimum 5 photos
+        # Checks for Minimum 3 photos
         if new_status == Booking.STATUS_WAITING_RENTER:
             count = booking.verification_photos.filter(photo_type=VerificationPhoto.TYPE_OWNER_START).count()
-            if count < 5:
-                raise serializers.ValidationError(f'Для передачи требуется минимум 5 фото от владельца. Загружено: {count}.')
+            if count < 3:
+                raise serializers.ValidationError(f'Для передачи требуется минимум 3 фото от владельца. Загружено: {count}.')
                 
         if new_status == Booking.STATUS_IN_RENT:
             count = booking.verification_photos.filter(photo_type=VerificationPhoto.TYPE_RENTER_START).count()
-            if count < 5:
-                raise serializers.ValidationError(f'Для старта аренды требуется минимум 5 фото от арендатора. Загружено: {count}.')
+            if count < 3:
+                raise serializers.ValidationError(f'Для старта аренды требуется минимум 3 фото от арендатора. Загружено: {count}.')
                 
         if new_status == Booking.STATUS_RETURNING:
             count = booking.verification_photos.filter(photo_type=VerificationPhoto.TYPE_RENTER_END).count()
-            if count < 5:
-                raise serializers.ValidationError(f'Для возврата требуется минимум 5 фото ПОСЛЕ от арендатора. Загружено: {count}.')
+            if count < 3:
+                raise serializers.ValidationError(f'Для возврата требуется минимум 3 фото ПОСЛЕ от арендатора. Загружено: {count}.')
 
         return new_status
 

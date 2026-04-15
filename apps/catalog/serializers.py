@@ -49,7 +49,7 @@ class ItemListSerializer(serializers.ModelSerializer):
     class Meta:
         model = Item
         fields = [
-            'id', 'title', 'price_per_day', 'deposit',
+            'id', 'title', 'price_per_day', 'client_price_per_day',
             'condition', 'city', 'address',
             'category_name', 'primary_image',
             'owner_name', 'created_at',
@@ -79,7 +79,7 @@ class ItemDetailSerializer(serializers.ModelSerializer):
     class Meta:
         model = Item
         fields = [
-            'id', 'title', 'description', 'price_per_day', 'deposit',
+            'id', 'title', 'description', 'price_per_day', 'client_price_per_day',
             'condition', 'status', 'city', 'address', 'latitude', 'longitude',
             'category', 'images', 'blocked_dates', 'owner', 'created_at',
         ]
@@ -114,18 +114,13 @@ class ItemCreateSerializer(serializers.ModelSerializer):
         model = Item
         fields = [
             'title', 'description', 'category',
-            'price_per_day', 'deposit', 'condition',
+            'price_per_day', 'condition',
             'address', 'city', 'latitude', 'longitude',
         ]
 
     def validate_price_per_day(self, value):
         if value <= 0:
             raise serializers.ValidationError('Цена должна быть больше нуля.')
-        return value
-
-    def validate_deposit(self, value):
-        if value < 0:
-            raise serializers.ValidationError('Залог не может быть отрицательным.')
         return value
 
     def create(self, validated_data):
@@ -141,7 +136,7 @@ class ItemUpdateSerializer(serializers.ModelSerializer):
         model = Item
         fields = [
             'title', 'description', 'category',
-            'price_per_day', 'deposit', 'condition',
+            'price_per_day', 'condition',
             'address', 'city', 'latitude', 'longitude', 'status',
         ]
 

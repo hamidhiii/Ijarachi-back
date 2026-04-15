@@ -71,8 +71,7 @@ class Item(models.Model):
     )
     title = models.CharField('Заголовок', max_length=200)
     description = models.TextField('Описание')
-    price_per_day = models.DecimalField('Цена за сутки (сум)', max_digits=12, decimal_places=0)
-    deposit = models.DecimalField('Залог (сум)', max_digits=12, decimal_places=0, default=0)
+    price_per_day = models.DecimalField('Цена (сутки, для владельца)', max_digits=12, decimal_places=0)
     condition = models.CharField('Состояние', max_length=20, choices=CONDITION_CHOICES, default=CONDITION_GOOD)
     status = models.CharField('Статус', max_length=20, choices=STATUS_CHOICES, default=STATUS_MODERATION)
 
@@ -96,6 +95,14 @@ class Item(models.Model):
     @property
     def primary_image(self):
         return self.images.filter(is_primary=True).first() or self.images.first()
+
+    @property
+    def client_price_per_day(self):
+        """Цена для арендатора (включает 15% комиссию платформы)."""
+        import decimal
+        from django.conf import settings
+        commission_pct = decimal.Decimal(settings.PLATFORM_COMMISSION_PERCENT) / 100
+        return (self.price_per_day * (1 + commission_pct)).quantize(decimal.Decimal('1'))
 
 
 class ItemImage(models.Model):
