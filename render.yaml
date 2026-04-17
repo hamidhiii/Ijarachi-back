@@ -17,24 +17,6 @@ services:
           name: synth-share-redis
           property: connectionString
 
-  # Background Worker for Celery tasks
-  - type: worker
-    name: synth-share-worker
-    env: python
-    buildCommand: "pip install -r requirements.txt"
-    startCommand: "celery -A core worker -l info"
-    envVars:
-      - fromGroup: synth-share-common
-      - key: DATABASE_URL
-        fromDatabase:
-          name: synth-share-db
-          property: connectionString
-      - key: REDIS_URL
-        fromService:
-          type: keyvalue
-          name: synth-share-redis
-          property: connectionString
-
   # Redis (Render Key Value)
   - type: keyvalue
     name: synth-share-redis
