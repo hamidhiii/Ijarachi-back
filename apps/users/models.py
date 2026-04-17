@@ -5,10 +5,11 @@ from django.utils.translation import gettext_lazy as _
 
 
 class CustomUserManager(BaseUserManager):
-    def create_user(self, phone, password=None, **extra_fields):
-        if not phone:
-            raise ValueError(_('Phone number is required'))
-        user = self.model(phone=phone, **extra_fields)
+    def create_user(self, email, password=None, **extra_fields):
+        if not email:
+            raise ValueError(_('Email is required'))
+        email = self.normalize_email(email)
+        user = self.model(email=email, **extra_fields)
         if password:
             user.set_password(password)
         else:
@@ -16,22 +17,22 @@ class CustomUserManager(BaseUserManager):
         user.save(using=self._db)
         return user
 
-    def create_superuser(self, phone, password=None, **extra_fields):
+    def create_superuser(self, email, password=None, **extra_fields):
         extra_fields.setdefault('is_staff', True)
         extra_fields.setdefault('is_superuser', True)
-        return self.create_user(phone, password, **extra_fields)
+        return self.create_user(email, password, **extra_fields)
 
 
 class CustomUser(AbstractBaseUser, PermissionsMixin):
-    phone = models.CharField(_('Phone'), max_length=20, unique=True)
-    email = models.EmailField(_('Email'), blank=True)
+    email = models.EmailField(_('Email'), unique=True)
+    phone = models.CharField(_('Phone'), max_length=20, blank=True)
     is_active = models.BooleanField(_('Active'), default=True)
     is_staff = models.BooleanField(_('Staff status'), default=False)
     date_joined = models.DateTimeField(_('Date joined'), default=timezone.now)
 
     objects = CustomUserManager()
 
-    USERNAME_FIELD = 'phone'
+    USERNAME_FIELD = 'email'
     REQUIRED_FIELDS = []
 
     class Meta:
@@ -39,7 +40,7 @@ class CustomUser(AbstractBaseUser, PermissionsMixin):
         verbose_name_plural = _('Users')
 
     def __str__(self):
-        return self.phone
+        return self.email
 
 
 class Profile(models.Model):
@@ -78,11 +79,11 @@ class Profile(models.Model):
         verbose_name_plural = _('Profiles')
 
     def __str__(self):
-        return f'Profile — {self.user.phone}'
+        return f'Profile — {self.user.email}'
 
 
 class OTPCode(models.Model):
-    phone = models.CharField(_('Phone'), max_length=20)
+    email = models.EmailField(_('Email'))
     code = models.CharField(_('OTP code'), max_length=6)
     created_at = models.DateTimeField(_('Created at'), auto_now_add=True)
     is_used = models.BooleanField(_('Used'), default=False)
@@ -93,7 +94,7 @@ class OTPCode(models.Model):
         ordering = ['-created_at']
 
     def __str__(self):
-        return f'{self.phone} — {self.code}'
+        return f'{self.email} — {self.code}'
 
 
 class KYCDocument(models.Model):
@@ -120,4 +121,4 @@ class KYCDocument(models.Model):
         verbose_name_plural = _('KYC documents')
 
     def __str__(self):
-        return f'KYC — {self.user.phone} [{self.status}]'
+        return f'KYC — {self.user.email} [{self.status}]'

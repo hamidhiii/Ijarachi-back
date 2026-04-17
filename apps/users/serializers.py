@@ -9,26 +9,12 @@ User = get_user_model()
 # ─── Auth ─────────────────────────────────────────────────────────────────────
 
 class SendOTPSerializer(serializers.Serializer):
-    phone = serializers.CharField(max_length=20)
-
-    def validate_phone(self, value):
-        import re
-        value = re.sub(r'\D', '', value)
-        if value.startswith('998') and len(value) == 12:
-            return '+' + value
-        raise serializers.ValidationError('Поддерживаются только номера Узбекистана (например, +998901234567).')
+    email = serializers.EmailField()
 
 
 class VerifyOTPSerializer(serializers.Serializer):
-    phone = serializers.CharField(max_length=20)
+    email = serializers.EmailField()
     code = serializers.CharField(max_length=6, min_length=6)
-
-    def validate_phone(self, value):
-        import re
-        value = re.sub(r'\D', '', value)
-        if value.startswith('998') and len(value) == 12:
-            return '+' + value
-        raise serializers.ValidationError('Поддерживаются только номера Узбекистана (например, +998901234567).')
 
 
 class TokenPairSerializer(serializers.Serializer):
@@ -41,13 +27,13 @@ class TokenPairSerializer(serializers.Serializer):
 # ─── Profile ──────────────────────────────────────────────────────────────────
 
 class ProfileSerializer(serializers.ModelSerializer):
-    phone = serializers.CharField(source='user.phone', read_only=True)
-    email = serializers.EmailField(source='user.email', required=False)
+    email = serializers.EmailField(source='user.email', read_only=True)
+    phone = serializers.CharField(source='user.phone', required=False)
 
     class Meta:
         model = Profile
         fields = [
-            'phone', 'email', 'full_name', 'avatar',
+            'email', 'phone', 'full_name', 'avatar',
             'rating', 'rating_count', 'verification_status',
         ]
         read_only_fields = ['rating', 'rating_count', 'verification_status']

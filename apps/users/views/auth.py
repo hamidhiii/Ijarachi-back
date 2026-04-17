@@ -14,7 +14,7 @@ from ..serializers import (
     SendOTPSerializer, VerifyOTPSerializer,
     KYCUploadSerializer, KYCStatusSerializer,
 )
-from ..sms import send_otp_sms, generate_otp
+from ..emails import send_otp_email, generate_otp
 
 logger = logging.getLogger(__name__)
 
@@ -29,11 +29,11 @@ class SendOTPView(APIView):
     def post(self, request):
         serializer = SendOTPSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        phone = serializer.validated_data['phone']
+        email = serializer.validated_data['email']
 
         # Rate-limit: не чаще раза в 60 секунд
         recent = OTPCode.objects.filter(
-            phone=phone,
+            email=email,
             created_at__gte=timezone.now() - timedelta(seconds=60),
             is_used=False,
         ).exists()
@@ -44,16 +44,16 @@ class SendOTPView(APIView):
             )
 
         code = generate_otp()
-        OTPCode.objects.create(phone=phone, code=code)
+        OTPCode.objects.create(email=email, code=code)
 
-        sent = send_otp_sms(phone, code)
+        sent = send_otp_email(email, code)
         if not sent:
             return Response(
-                {'detail': 'Не удалось отправить SMS. Попробуйте позже.'},
+                {'detail': 'Не удалось отправить письмо. Попробуйте позже.'},
                 status=status.HTTP_503_SERVICE_UNAVAILABLE,
             )
 
-        return Response({'detail': 'Код отправлен.', 'phone': phone})
+        return Response({'detail': 'Код отправлен.', 'email': email})
 
 
 class VerifyOTPView(APIView):
@@ -66,12 +66,12 @@ class VerifyOTPView(APIView):
     def post(self, request):
         serializer = VerifyOTPSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        phone = serializer.validated_data['phone']
+        email = serializer.validated_data['email']
         code = serializer.validated_data['code']
 
         expiry = timezone.now() - timedelta(seconds=settings.OTP_EXPIRY_SECONDS)
         otp = OTPCode.objects.filter(
-            phone=phone,
+            email=email,
             code=code,
             is_used=False,
             created_at__gte=expiry,
@@ -86,10 +86,10 @@ class VerifyOTPView(APIView):
         otp.is_used = True
         otp.save(update_fields=['is_used'])
 
-        user, is_new = CustomUser.objects.get_or_create(phone=phone)
+        user, is_new = CustomUser.objects.get_or_create(email=email)
         if is_new:
             Profile.objects.create(user=user)
-            logger.info('New user registered: %s', phone)
+            logger.info('New user registered: %s', email)
 
         refresh = RefreshToken.for_user(user)
         return Response({

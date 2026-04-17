@@ -6,20 +6,20 @@ from .models import CustomUser, Profile, OTPCode, KYCDocument
 
 @admin.register(CustomUser)
 class CustomUserAdmin(UserAdmin):
-    list_display = ['phone', 'email', 'is_active', 'is_staff', 'date_joined']
+    list_display = ['email', 'phone', 'is_active', 'is_staff', 'date_joined']
     list_filter = ['is_active', 'is_staff']
-    search_fields = ['phone', 'email']
+    search_fields = ['email', 'phone']
     ordering = ['-date_joined']
     fieldsets = (
-        (None, {'fields': ('phone', 'password')}),
-        (_('Personal Info'), {'fields': ('email',)}),
+        (None, {'fields': ('email', 'password')}),
+        (_('Personal Info'), {'fields': ('phone',)}),
         (_('Permissions'), {'fields': ('is_active', 'is_staff', 'is_superuser', 'groups', 'user_permissions')}),
         (_('Important Dates'), {'fields': ('last_login', 'date_joined')}),
     )
     add_fieldsets = (
         (None, {
             'classes': ('wide',),
-            'fields': ('phone', 'password1', 'password2'),
+            'fields': ('email', 'password1', 'password2'),
         }),
     )
 
@@ -28,7 +28,7 @@ class CustomUserAdmin(UserAdmin):
 class ProfileAdmin(admin.ModelAdmin):
     list_display = ['user', 'full_name', 'rating', 'verification_status', 'language']
     list_filter = ['verification_status', 'language']
-    search_fields = ['user__phone', 'full_name']
+    search_fields = ['user__email', 'full_name']
     readonly_fields = ['rating', 'rating_count']
     fieldsets = (
         (None, {'fields': ('user', 'full_name', 'avatar')}),
@@ -40,9 +40,9 @@ class ProfileAdmin(admin.ModelAdmin):
 
 @admin.register(OTPCode)
 class OTPCodeAdmin(admin.ModelAdmin):
-    list_display = ['phone', 'code', 'created_at', 'is_used']
+    list_display = ['email', 'code', 'created_at', 'is_used']
     list_filter = ['is_used']
-    search_fields = ['phone']
+    search_fields = ['email']
     ordering = ['-created_at']
 
 
@@ -50,7 +50,7 @@ class OTPCodeAdmin(admin.ModelAdmin):
 class KYCDocumentAdmin(admin.ModelAdmin):
     list_display = ['user', 'status', 'submitted_at', 'reviewed_at']
     list_filter = ['status']
-    search_fields = ['user__phone']
+    search_fields = ['user__email']
     actions = ['approve', 'reject']
 
     @admin.action(description=_('Approve selected KYC documents'))
