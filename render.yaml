@@ -20,7 +20,7 @@ services:
           property: connectionString
       - key: REDIS_URL
         fromService:
-          type: redis
+          type: keyvalue
           name: synth-share-redis
           property: connectionString
 
@@ -46,17 +46,18 @@ services:
           property: connectionString
       - key: REDIS_URL
         fromService:
-          type: redis
+          type: keyvalue
           name: synth-share-redis
           property: connectionString
+
+  # Redis (Render Key Value)
+  - type: keyvalue
+    name: synth-share-redis
+    ipAllowList: [] # Only allow internal connections
+    plan: free # Note: Free tier expires in 90 days. Update to starter for production.
 
 databases:
   - name: synth-share-db
     databaseName: synth_share
     user: synth_user
-    plan: free # Note: Free tier expires in 90 days. Update to starter for production.
-
-redis:
-  - name: synth-share-redis
-    ipAllowList: [] # Only allow internal connections
     plan: free # Note: Free tier expires in 90 days. Update to starter for production.
