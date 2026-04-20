@@ -1,14 +1,19 @@
 from decimal import Decimal
-from django.conf import settings
 from rest_framework import serializers
-from .models import Booking, PhotoProtocol
+from .models import Booking, Deliverer
 from apps.catalog.models import Item
+
+PLATFORM_COMMISSION = Decimal('0.15')
 
 
 class BookingCreateSerializer(serializers.ModelSerializer):
     class Meta:
         model = Booking
-        fields = ['item', 'start_date', 'end_date', 'renter_comment']
+        fields = [
+            'item', 'start_date', 'end_date',
+            'delivery_address', 'delivery_lat', 'delivery_lng',
+            'renter_comment',
+        ]
 
     def validate(self, data):
         item = data['item']
@@ -24,28 +29,25 @@ class BookingCreateSerializer(serializers.ModelSerializer):
         if item.owner == self.context['request'].user:
             raise serializers.ValidationError('Нельзя арендовать собственную вещь.')
 
-        # Check availability
         try:
             if not item.availability.is_available(start, end):
                 raise serializers.ValidationError('Выбранные даты уже заняты.')
-        except item.availability.RelatedObjectDoesNotExist:
-            pass  # No availability record = all dates free
+        except Item.availability.RelatedObjectDoesNotExist:
+            pass
 
         return data
 
     def create(self, validated_data):
-        from django.conf import settings
         item = validated_data['item']
         start = validated_data['start_date']
         end = validated_data['end_date']
         days = (end - start).days + 1
 
-        commission_pct = Decimal(settings.PLATFORM_COMMISSION_PERCENT) / 100
         rental_cost = item.price_per_day * days
-        commission = (rental_cost * commission_pct).quantize(Decimal('1'))
+        commission = (rental_cost * PLATFORM_COMMISSION).quantize(Decimal('1'))
         total = rental_cost + commission + item.deposit
 
-        booking = Booking.objects.create(
+        return Booking.objects.create(
             renter=self.context['request'].user,
             item=item,
             start_date=start,
@@ -54,10 +56,18 @@ class BookingCreateSerializer(serializers.ModelSerializer):
             deposit_amount=item.deposit,
             commission_amount=commission,
             total_price=total,
+            delivery_address=validated_data.get('delivery_address', ''),
+            delivery_lat=validated_data.get('delivery_lat'),
+            delivery_lng=validated_data.get('delivery_lng'),
             renter_comment=validated_data.get('renter_comment', ''),
-            status=Booking.STATUS_WAITING_PAYMENT,
+            status=Booking.STATUS_PAYMENT_PENDING,
         )
-        return booking
+
+
+class DelivererSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Deliverer
+        fields = ['id', 'name', 'phone']
 
 
 class BookingListSerializer(serializers.ModelSerializer):
@@ -71,38 +81,65 @@ class BookingListSerializer(serializers.ModelSerializer):
         fields = [
             'id', 'item_id', 'item_title', 'renter_phone',
             'start_date', 'end_date', 'days',
-            'price_per_day', 'deposit_amount', 'commission_amount', 'total_price',
-            'status', 'created_at',
+            'total_price', 'status', 'created_at',
         ]
 
 
 class BookingDetailSerializer(serializers.ModelSerializer):
     days = serializers.IntegerField(read_only=True)
-    photos = serializers.SerializerMethodField()
+    deliverer = DelivererSerializer(read_only=True)
+    owner_phone = serializers.CharField(source='item.owner.phone', read_only=True)
+    item_title = serializers.CharField(source='item.title', read_only=True)
+    progress_renter = serializers.SerializerMethodField()
+    progress_owner = serializers.SerializerMethodField()
 
     class Meta:
         model = Booking
         fields = [
-            'id', 'item', 'renter',
+            'id', 'item', 'item_title', 'renter', 'owner_phone',
             'start_date', 'end_date', 'days',
             'price_per_day', 'deposit_amount', 'commission_amount', 'total_price',
-            'status', 'renter_comment', 'photos', 'created_at', 'updated_at',
+            'delivery_address', 'delivery_lat', 'delivery_lng',
+            'deliverer', 'pickup_eta', 'delivery_eta',
+            'status', 'progress_renter', 'progress_owner',
+            'renter_comment', 'created_at', 'updated_at',
         ]
         read_only_fields = ['renter', 'price_per_day', 'deposit_amount', 'commission_amount', 'total_price']
 
-    def get_photos(self, obj):
-        return PhotoProtocolSerializer(obj.photos.all(), many=True, context=self.context).data
+    def get_progress_renter(self, obj) -> str:
+        return obj.progress_for('renter')
+
+    def get_progress_owner(self, obj) -> str:
+        return obj.progress_for('owner')
+
+
+class AssignDelivererSerializer(serializers.Serializer):
+    """Admin-only: assign a deliverer and set ETAs."""
+    deliverer_id = serializers.IntegerField()
+    pickup_eta = serializers.DateTimeField()
+    delivery_eta = serializers.DateTimeField()
+
+    def validate_deliverer_id(self, value):
+        try:
+            return Deliverer.objects.get(pk=value, is_active=True)
+        except Deliverer.DoesNotExist:
+            raise serializers.ValidationError('Доставщик не найден или неактивен.')
+
+    def validate(self, data):
+        if data['pickup_eta'] >= data['delivery_eta']:
+            raise serializers.ValidationError('ETA к арендатору должна быть позже ETA к владельцу.')
+        return data
 
 
 class BookingStatusUpdateSerializer(serializers.Serializer):
-    """For status transitions by owner or renter."""
+    """Status transitions based on role."""
+    # (current_status, role) → allowed next statuses
     ALLOWED_TRANSITIONS = {
-        # (current_status, role) → allowed next statuses
-        (Booking.STATUS_WAITING_PAYMENT, 'renter'): [Booking.STATUS_CANCELLED],
-        (Booking.STATUS_PAID_ESCROW, 'owner'): [Booking.STATUS_ACTIVE],
-        (Booking.STATUS_ACTIVE, 'owner'): [Booking.STATUS_RETURNING],
-        (Booking.STATUS_RETURNING, 'renter'): [Booking.STATUS_COMPLETED, Booking.STATUS_DISPUTE],
-        (Booking.STATUS_RETURNING, 'owner'): [Booking.STATUS_DISPUTE],
+        (Booking.STATUS_PLACED, 'renter'): [Booking.STATUS_CANCELLED],
+        (Booking.STATUS_PICKUP_SCHEDULED, 'deliverer'): [Booking.STATUS_PICKED_UP],
+        (Booking.STATUS_PICKED_UP, 'deliverer'): [Booking.STATUS_ACTIVE],
+        (Booking.STATUS_ACTIVE, 'owner'): [Booking.STATUS_COMPLETED],
+        (Booking.STATUS_ACTIVE, 'renter'): [Booking.STATUS_COMPLETED],
     }
 
     status = serializers.ChoiceField(choices=Booking.STATUS_CHOICES)
@@ -111,47 +148,27 @@ class BookingStatusUpdateSerializer(serializers.Serializer):
         booking = self.context['booking']
         user = self.context['request'].user
 
-        role = None
-        if user == booking.renter:
-            role = 'renter'
-        elif user == booking.item.owner:
-            role = 'owner'
-        else:
+        role = self._resolve_role(booking, user)
+        if not role:
             raise serializers.ValidationError('У вас нет доступа к этому бронированию.')
 
         allowed = self.ALLOWED_TRANSITIONS.get((booking.status, role), [])
         if new_status not in allowed:
             raise serializers.ValidationError(
-                f'Переход из "{booking.status}" в "{new_status}" не разрешён для роли "{role}".'
+                f'Переход из "{booking.status}" в "{new_status}" не разрешён.'
             )
         return new_status
 
-
-class PhotoProtocolSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = PhotoProtocol
-        fields = ['id', 'photo_type', 'image', 'uploaded_at', 'comment']
-        read_only_fields = ['id', 'uploaded_at']
-
-
-class PhotoProtocolUploadSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = PhotoProtocol
-        fields = ['photo_type', 'image', 'comment']
-
-    def validate(self, data):
-        booking = self.context['booking']
-        photo_type = data['photo_type']
-
-        if photo_type == PhotoProtocol.TYPE_BEFORE and booking.status != Booking.STATUS_PAID_ESCROW:
-            raise serializers.ValidationError('Фото "до" можно загрузить только при статусе "paid_escrow".')
-        if photo_type == PhotoProtocol.TYPE_AFTER and booking.status != Booking.STATUS_RETURNING:
-            raise serializers.ValidationError('Фото "после" можно загрузить только при статусе "returning".')
-        return data
-
-    def create(self, validated_data):
-        return PhotoProtocol.objects.create(
-            booking=self.context['booking'],
-            uploaded_by=self.context['request'].user,
-            **validated_data,
-        )
+    def _resolve_role(self, booking, user):
+        if user.is_staff:
+            return 'admin'
+        if user == booking.renter:
+            return 'renter'
+        if user == booking.item.owner:
+            return 'owner'
+        try:
+            if user == booking.deliverer.user:  # noqa: if Deliverer gets a user FK
+                return 'deliverer'
+        except Exception:
+            pass
+        return None

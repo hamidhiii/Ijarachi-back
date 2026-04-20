@@ -15,12 +15,14 @@ class Payment(models.Model):
     STATUS_PAID = 'paid'
     STATUS_FAILED = 'failed'
     STATUS_REFUNDED = 'refunded'
+    STATUS_COMPLETED = 'completed'
 
     STATUS_CHOICES = [
         (STATUS_PENDING, 'Ожидает'),
-        (STATUS_PAID, 'Оплачено'),
+        (STATUS_PAID, 'Оплачено (эскроу)'),
         (STATUS_FAILED, 'Ошибка'),
         (STATUS_REFUNDED, 'Возвращено'),
+        (STATUS_COMPLETED, 'Выплачено владельцу'),
     ]
 
     booking = models.ForeignKey(

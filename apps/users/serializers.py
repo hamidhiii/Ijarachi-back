@@ -48,9 +48,9 @@ class ProfileSerializer(serializers.ModelSerializer):
         model = Profile
         fields = [
             'phone', 'email', 'full_name', 'avatar',
-            'rating', 'rating_count', 'verification_status',
+            'rating', 'rating_count', 'verification_status', 'wallet_balance',
         ]
-        read_only_fields = ['rating', 'rating_count', 'verification_status']
+        read_only_fields = ['rating', 'rating_count', 'verification_status', 'wallet_balance']
 
     def update(self, instance, validated_data):
         user_data = validated_data.pop('user', {})

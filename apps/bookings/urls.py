@@ -4,13 +4,13 @@ from .views import (
     MyRentalsView,
     BookingDetailView,
     BookingStatusUpdateView,
-    PhotoProtocolUploadView,
+    AssignDelivererView,
 )
 
 urlpatterns = [
     path('bookings/create/', BookingCreateView.as_view(), name='booking-create'),
     path('bookings/<int:pk>/', BookingDetailView.as_view(), name='booking-detail'),
     path('bookings/<int:pk>/status/', BookingStatusUpdateView.as_view(), name='booking-status'),
-    path('bookings/<int:pk>/photos/', PhotoProtocolUploadView.as_view(), name='booking-photos'),
+    path('bookings/<int:pk>/assign-deliverer/', AssignDelivererView.as_view(), name='booking-assign-deliverer'),
     path('my-rentals/', MyRentalsView.as_view(), name='my-rentals'),
 ]

@@ -57,6 +57,7 @@ class Profile(models.Model):
     avatar = models.ImageField('Аватар', upload_to='avatars/', blank=True, null=True)
     rating = models.FloatField('Рейтинг', default=0.0)
     rating_count = models.PositiveIntegerField('Кол-во оценок', default=0)
+    wallet_balance = models.DecimalField('Баланс (сум)', max_digits=14, decimal_places=0, default=0)
     verification_status = models.CharField(
         'Статус верификации',
         max_length=20,

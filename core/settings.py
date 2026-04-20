@@ -32,6 +32,9 @@ INSTALLED_APPS = [
     'drf_spectacular',
     'phonenumber_field',
 
+    # Celery beat
+    'django_celery_beat',
+
     # Project apps
     'apps.users',
     'apps.catalog',
@@ -124,6 +127,9 @@ CORS_ALLOWED_ORIGINS = config(
 ).split(',')
 CORS_ALLOW_CREDENTIALS = True
 
+if DEBUG:
+    CORS_ALLOW_ALL_ORIGINS = True
+
 # ─── Redis & Celery ───────────────────────────────────────────────────────────
 
 REDIS_URL = config('REDIS_URL', default='redis://localhost:6379/0')
@@ -144,6 +150,15 @@ CELERY_ACCEPT_CONTENT = ['json']
 CELERY_TASK_SERIALIZER = 'json'
 CELERY_RESULT_SERIALIZER = 'json'
 CELERY_TIMEZONE = 'Asia/Tashkent'
+CELERY_BEAT_SCHEDULER = 'django_celery_beat.schedulers:DatabaseScheduler'
+
+from celery.schedules import crontab
+CELERY_BEAT_SCHEDULE = {
+    'notify-expiring-bookings-daily': {
+        'task': 'apps.bookings.tasks.notify_expiring_bookings',
+        'schedule': crontab(hour=9, minute=0),
+    },
+}
 
 # ─── Media & Static ───────────────────────────────────────────────────────────
 

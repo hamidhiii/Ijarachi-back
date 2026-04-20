@@ -79,27 +79,40 @@ def notify_expiring_bookings(self):
 def release_escrow(self, booking_id: int):
     """
     Triggered when booking is COMPLETED.
-    Marks payment as ready for payout (escrow release logic placeholder).
+    Platform keeps 15%, owner gets 85% credited to wallet_balance.
     """
+    from decimal import Decimal
     try:
         from apps.bookings.models import Booking
         from apps.payments.models import Payment
+        from django.db import transaction as db_transaction
 
-        booking = Booking.objects.get(pk=booking_id)
+        booking = Booking.objects.select_related('item__owner__profile').get(pk=booking_id)
         payment = Payment.objects.filter(
             booking=booking,
             status=Payment.STATUS_PAID,
         ).first()
 
-        if payment:
-            logger.info(
-                'Escrow release triggered for booking #%s, payment #%s, amount=%s',
-                booking_id, payment.pk, payment.amount
-            )
-            # TODO: integrate with actual payout API (Payme/Click withdrawal)
-            # For now, just log. The transit account holds the funds.
-        else:
+        if not payment:
             logger.warning('No paid payment found for booking #%s during escrow release', booking_id)
+            return
+
+        # amount stored in tiyin (×100), convert to sums
+        total_sums = Decimal(str(payment.amount)) / 100
+        owner_payout = (total_sums * Decimal('0.85')).quantize(Decimal('1'))
+
+        with db_transaction.atomic():
+            profile = booking.item.owner.profile
+            profile.wallet_balance += owner_payout
+            profile.save(update_fields=['wallet_balance'])
+
+            payment.status = Payment.STATUS_COMPLETED
+            payment.save(update_fields=['status', 'updated_at'])
+
+        logger.info(
+            'Escrow released for booking #%s: total=%s sums, owner payout=%s sums (85%%)',
+            booking_id, total_sums, owner_payout,
+        )
 
     except Exception as exc:
         logger.error('release_escrow failed for booking #%s: %s', booking_id, exc)

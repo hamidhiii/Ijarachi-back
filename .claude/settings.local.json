@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(pip list *)",
+      "Bash(python manage.py makemigrations users bookings payments)"
+    ]
+  }
+}
