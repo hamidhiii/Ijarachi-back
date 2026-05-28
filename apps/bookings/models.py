@@ -16,45 +16,76 @@ class Deliverer(models.Model):
 
 
 class Booking(models.Model):
-    # Payment pending — internal state before payment confirmed
-    STATUS_PAYMENT_PENDING = 'payment_pending'
-    # Progress visible to users
-    STATUS_PLACED = 'placed'               # Заказ оформлен
-    STATUS_PICKUP_SCHEDULED = 'pickup_scheduled'  # Доставщик едет к владельцу
-    STATUS_PICKED_UP = 'picked_up'         # Доставщик забрал вещь
-    STATUS_ACTIVE = 'active'               # Аренда активна (доставлено арендатору)
-    STATUS_COMPLETED = 'completed'         # Аренда завершена
-    STATUS_CANCELLED = 'cancelled'         # Отменено
+    STATUS_DRAFT = 'draft'
+    STATUS_PENDING_PAYMENT = 'pending_payment'
+    STATUS_PAID = 'paid'
+    STATUS_IN_PROGRESS = 'in_progress'
+    STATUS_RETURNED = 'returned'
+    STATUS_COMPLETED = 'completed'
+    STATUS_CANCELLED = 'cancelled'
+    STATUS_DISPUTED = 'disputed'
+
+    # Backward-compatible aliases used by older endpoints.
+    STATUS_PAYMENT_PENDING = STATUS_PENDING_PAYMENT
+    STATUS_PLACED = STATUS_PAID
+    STATUS_PICKUP_SCHEDULED = STATUS_IN_PROGRESS
+    STATUS_PICKED_UP = STATUS_IN_PROGRESS
+    STATUS_ACTIVE = STATUS_IN_PROGRESS
 
     STATUS_CHOICES = [
-        (STATUS_PAYMENT_PENDING, 'Ожидает оплаты'),
-        (STATUS_PLACED, 'Заказ оформлен'),
-        (STATUS_PICKUP_SCHEDULED, 'Доставщик едет к владельцу'),
-        (STATUS_PICKED_UP, 'Доставщик забрал вещь'),
-        (STATUS_ACTIVE, 'Аренда активна'),
-        (STATUS_COMPLETED, 'Аренда завершена'),
-        (STATUS_CANCELLED, 'Отменено'),
+        (STATUS_DRAFT, 'Draft'),
+        (STATUS_PENDING_PAYMENT, 'Pending payment'),
+        (STATUS_PAID, 'Paid'),
+        (STATUS_IN_PROGRESS, 'In progress'),
+        (STATUS_RETURNED, 'Returned'),
+        (STATUS_COMPLETED, 'Completed'),
+        (STATUS_CANCELLED, 'Cancelled'),
+        (STATUS_DISPUTED, 'Disputed'),
+    ]
+
+    DELIVERY_PICKUP = 'pickup'
+    DELIVERY_DELIVERY = 'delivery'
+
+    DELIVERY_CHOICES = [
+        (DELIVERY_PICKUP, 'Pickup'),
+        (DELIVERY_DELIVERY, 'Delivery'),
+    ]
+
+    ESCROW_PENDING = 'pending'
+    ESCROW_HELD = 'held'
+    ESCROW_RELEASED = 'released'
+    ESCROW_REFUNDED = 'refunded'
+    ESCROW_FROZEN = 'frozen'
+
+    ESCROW_CHOICES = [
+        (ESCROW_PENDING, 'Pending'),
+        (ESCROW_HELD, 'Held'),
+        (ESCROW_RELEASED, 'Released'),
+        (ESCROW_REFUNDED, 'Refunded'),
+        (ESCROW_FROZEN, 'Frozen'),
     ]
 
     # Progress label per status for each role (used by mobile)
     PROGRESS_RENTER = {
-        STATUS_PAYMENT_PENDING: 'Ожидание подтверждения оплаты',
-        STATUS_PLACED: 'Заказ оформлен',
-        STATUS_PICKUP_SCHEDULED: 'Доставщик заберёт вещь у владельца',
-        STATUS_PICKED_UP: 'Доставщик забрал вещь, скоро привезёт',
-        STATUS_ACTIVE: 'Аренда началась',
+        STATUS_DRAFT: 'Черновик сделки',
+        STATUS_PENDING_PAYMENT: 'Ожидание оплаты',
+        STATUS_PAID: 'Оплата прошла',
+        STATUS_IN_PROGRESS: 'Аренда началась',
+        STATUS_RETURNED: 'Возврат подтверждён',
         STATUS_COMPLETED: 'Аренда завершена',
         STATUS_CANCELLED: 'Заказ отменён',
+        STATUS_DISPUTED: 'Открыт спор',
     }
 
     PROGRESS_OWNER = {
-        STATUS_PAYMENT_PENDING: 'Новый заказ — ожидание оплаты',
-        STATUS_PLACED: 'Новый заказ — данные заказа ниже',
-        STATUS_PICKUP_SCHEDULED: 'Доставщик едет к вам',
-        STATUS_PICKED_UP: 'Доставщик везёт вещь арендатору',
-        STATUS_ACTIVE: 'Аренда активна',
+        STATUS_DRAFT: 'Черновик сделки',
+        STATUS_PENDING_PAYMENT: 'Ожидание оплаты',
+        STATUS_PAID: 'Оплата прошла',
+        STATUS_IN_PROGRESS: 'Аренда активна',
+        STATUS_RETURNED: 'Возврат подтверждён',
         STATUS_COMPLETED: 'Аренда завершена, средства зачислены',
         STATUS_CANCELLED: 'Заказ отменён',
+        STATUS_DISPUTED: 'Открыт спор',
     }
 
     item = models.ForeignKey(
@@ -75,13 +106,18 @@ class Booking(models.Model):
     # Pricing snapshot at booking time
     price_per_day = models.DecimalField('Цена/день', max_digits=12, decimal_places=0)
     deposit_amount = models.DecimalField('Залог', max_digits=12, decimal_places=0)
-    commission_amount = models.DecimalField('Комиссия платформы (15%)', max_digits=12, decimal_places=0)
+    commission_amount = models.DecimalField('Комиссия платформы', max_digits=12, decimal_places=0)
+    delivery_cost = models.DecimalField('Стоимость доставки', max_digits=12, decimal_places=0, default=0)
     total_price = models.DecimalField('Итого', max_digits=12, decimal_places=0)
 
     # Delivery
+    delivery_method = models.CharField(max_length=20, choices=DELIVERY_CHOICES, default=DELIVERY_PICKUP)
     delivery_address = models.CharField('Адрес доставки', max_length=500, blank=True, default='')
     delivery_lat = models.FloatField('Широта доставки', null=True, blank=True)
     delivery_lng = models.FloatField('Долгота доставки', null=True, blank=True)
+    delivery_comment = models.TextField(blank=True)
+    yandex_delivery_order_id = models.CharField(max_length=120, blank=True)
+    yandex_delivery_status = models.CharField(max_length=80, blank=True)
     deliverer = models.ForeignKey(
         Deliverer,
         on_delete=models.SET_NULL,
@@ -92,8 +128,13 @@ class Booking(models.Model):
     pickup_eta = models.DateTimeField('ETA к владельцу', null=True, blank=True)
     delivery_eta = models.DateTimeField('ETA к арендатору', null=True, blank=True)
 
-    status = models.CharField('Статус', max_length=30, choices=STATUS_CHOICES, default=STATUS_PAYMENT_PENDING)
+    status = models.CharField('Статус', max_length=30, choices=STATUS_CHOICES, default=STATUS_DRAFT)
+    escrow_status = models.CharField(max_length=20, choices=ESCROW_CHOICES, default=ESCROW_PENDING)
+    escrow_amount = models.DecimalField(max_digits=14, decimal_places=0, default=0)
     renter_comment = models.TextField('Комментарий арендатора', blank=True)
+    dispute_reason = models.TextField(blank=True)
+    returned_at = models.DateTimeField(null=True, blank=True)
+    contact_revealed_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -108,6 +149,10 @@ class Booking(models.Model):
     @property
     def days(self):
         return (self.end_date - self.start_date).days + 1
+
+    @property
+    def owner(self):
+        return self.item.owner
 
     def transition_to(self, new_status: str):
         import logging

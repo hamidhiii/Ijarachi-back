@@ -1,5 +1,5 @@
 """
-Django settings for SYNTH Share project.
+Django settings for Rentoo backend.
 """
 
 from pathlib import Path
@@ -31,6 +31,8 @@ INSTALLED_APPS = [
     'mptt',
     'drf_spectacular',
     'phonenumber_field',
+    'channels',
+    'storages',
 
     # Celery beat
     'django_celery_beat',
@@ -40,6 +42,9 @@ INSTALLED_APPS = [
     'apps.catalog',
     'apps.bookings',
     'apps.payments',
+    'apps.delivery',
+    'apps.chat',
+    'apps.notifications',
 ]
 
 MIDDLEWARE = [
@@ -72,13 +77,14 @@ TEMPLATES = [
 ]
 
 WSGI_APPLICATION = 'core.wsgi.application'
+ASGI_APPLICATION = 'core.asgi.application'
 
 # ─── Database ─────────────────────────────────────────────────────────────────
 
 DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.postgresql',
-        'NAME': config('DB_NAME', default='synth_share'),
+        'NAME': config('DB_NAME', default='rentoo'),
         'USER': config('DB_USER', default='postgres'),
         'PASSWORD': config('DB_PASSWORD', default='postgres'),
         'HOST': config('DB_HOST', default='localhost'),
@@ -105,11 +111,20 @@ REST_FRAMEWORK = {
     'DEFAULT_SCHEMA_CLASS': 'drf_spectacular.openapi.AutoSchema',
     'DEFAULT_PAGINATION_CLASS': 'rest_framework.pagination.PageNumberPagination',
     'PAGE_SIZE': 20,
+    'DEFAULT_THROTTLE_CLASSES': (
+        'rest_framework.throttling.ScopedRateThrottle',
+    ),
+    'DEFAULT_THROTTLE_RATES': {
+        'auth': '10/min',
+        'sms': '3/min',
+        'payments': '20/min',
+        'myid': '10/min',
+    },
 }
 
 SIMPLE_JWT = {
     'ACCESS_TOKEN_LIFETIME': timedelta(
-        minutes=config('JWT_ACCESS_TOKEN_LIFETIME_MINUTES', default=60, cast=int)
+        minutes=config('JWT_ACCESS_TOKEN_LIFETIME_MINUTES', default=15, cast=int)
     ),
     'REFRESH_TOKEN_LIFETIME': timedelta(
         days=config('JWT_REFRESH_TOKEN_LIFETIME_DAYS', default=30, cast=int)
@@ -144,6 +159,15 @@ CACHES = {
     }
 }
 
+CHANNEL_LAYERS = {
+    'default': {
+        'BACKEND': 'channels_redis.core.RedisChannelLayer',
+        'CONFIG': {
+            'hosts': [REDIS_URL],
+        },
+    },
+}
+
 CELERY_BROKER_URL = REDIS_URL
 CELERY_RESULT_BACKEND = REDIS_URL
 CELERY_ACCEPT_CONTENT = ['json']
@@ -158,6 +182,10 @@ CELERY_BEAT_SCHEDULE = {
         'task': 'apps.bookings.tasks.notify_expiring_bookings',
         'schedule': crontab(hour=9, minute=0),
     },
+    'create-return-delivery-orders-daily': {
+        'task': 'apps.delivery.tasks.create_return_delivery_orders',
+        'schedule': crontab(hour=10, minute=0),
+    },
 }
 
 # ─── Media & Static ───────────────────────────────────────────────────────────
@@ -168,6 +196,16 @@ STATICFILES_DIRS = [BASE_DIR / 'static']
 
 MEDIA_URL = '/media/'
 MEDIA_ROOT = BASE_DIR / 'media'
+
+USE_S3 = config('USE_S3', default=False, cast=bool)
+if USE_S3:
+    AWS_ACCESS_KEY_ID = config('AWS_ACCESS_KEY_ID', default='')
+    AWS_SECRET_ACCESS_KEY = config('AWS_SECRET_ACCESS_KEY', default='')
+    AWS_STORAGE_BUCKET_NAME = config('AWS_STORAGE_BUCKET_NAME', default='')
+    AWS_S3_ENDPOINT_URL = config('AWS_S3_ENDPOINT_URL', default='')
+    AWS_S3_REGION_NAME = config('AWS_S3_REGION_NAME', default='ru-central1')
+    AWS_QUERYSTRING_AUTH = False
+    DEFAULT_FILE_STORAGE = 'storages.backends.s3boto3.S3Boto3Storage'
 
 # ─── Internationalization ─────────────────────────────────────────────────────
 
@@ -182,6 +220,25 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
 ESKIZ_EMAIL = config('ESKIZ_EMAIL', default='')
 ESKIZ_PASSWORD = config('ESKIZ_PASSWORD', default='')
+
+# MyID OAuth
+MYID_CLIENT_ID = config('MYID_CLIENT_ID', default='')
+MYID_CLIENT_SECRET = config('MYID_CLIENT_SECRET', default='')
+MYID_REDIRECT_URI = config('MYID_REDIRECT_URI', default='http://localhost:8000/api/v1/myid/callback/')
+MYID_AUTHORIZE_URL = config('MYID_AUTHORIZE_URL', default='https://myid.uz/oauth/authorize')
+MYID_TOKEN_URL = config('MYID_TOKEN_URL', default='https://myid.uz/oauth/token')
+MYID_USERINFO_URL = config('MYID_USERINFO_URL', default='https://myid.uz/api/userinfo')
+MYID_FIRST_DEAL_COST = config('MYID_FIRST_DEAL_COST', default=8000, cast=int)
+
+# Yandex Delivery / Go Business
+YANDEX_DELIVERY_API_KEY = config('YANDEX_DELIVERY_API_KEY', default='')
+YANDEX_DELIVERY_BASE_URL = config(
+    'YANDEX_DELIVERY_BASE_URL',
+    default='https://b2b.taxi.yandex.net/b2b/cargo/integration/v2',
+)
+
+# Push notifications
+FCM_SERVER_KEY = config('FCM_SERVER_KEY', default='')
 
 # ─── Payment Providers ────────────────────────────────────────────────────────
 
@@ -201,8 +258,8 @@ OTP_EXPIRY_SECONDS = 120  # 2 minutes
 # ─── Swagger/Redoc ────────────────────────────────────────────────────────────
 
 SPECTACULAR_SETTINGS = {
-    'TITLE': 'SYNTH Share API',
-    'DESCRIPTION': 'P2P Rental Platform — "Той и праздники" category',
+    'TITLE': 'Rentoo API',
+    'DESCRIPTION': 'P2P rental backend for Rentoo.',
     'VERSION': '1.0.0',
     'SERVE_INCLUDE_SCHEMA': False,
     'COMPONENT_SPLIT_REQUEST': True,
@@ -232,6 +289,16 @@ LOGGING = {
             'propagate': False,
         },
         'apps.bookings': {
+            'handlers': ['console'],
+            'level': 'INFO',
+            'propagate': False,
+        },
+        'apps.delivery': {
+            'handlers': ['console'],
+            'level': 'INFO',
+            'propagate': False,
+        },
+        'apps.notifications': {
             'handlers': ['console'],
             'level': 'INFO',
             'propagate': False,

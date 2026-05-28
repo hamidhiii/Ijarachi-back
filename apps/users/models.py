@@ -1,6 +1,7 @@
 from django.contrib.auth.models import AbstractBaseUser, BaseUserManager, PermissionsMixin
 from django.db import models
 from django.utils import timezone
+import hashlib
 
 
 class CustomUserManager(BaseUserManager):
@@ -58,6 +59,9 @@ class Profile(models.Model):
     rating = models.FloatField('Рейтинг', default=0.0)
     rating_count = models.PositiveIntegerField('Кол-во оценок', default=0)
     wallet_balance = models.DecimalField('Баланс (сум)', max_digits=14, decimal_places=0, default=0)
+    is_verified_myid = models.BooleanField(default=False)
+    myid_verified_at = models.DateTimeField(null=True, blank=True)
+    myid_external_id_hash = models.CharField(max_length=128, blank=True)
     verification_status = models.CharField(
         'Статус верификации',
         max_length=20,
@@ -71,6 +75,18 @@ class Profile(models.Model):
 
     def __str__(self):
         return f'Профиль — {self.user.phone}'
+
+    def mark_myid_verified(self, external_id: str):
+        self.is_verified_myid = True
+        self.myid_verified_at = timezone.now()
+        self.myid_external_id_hash = hashlib.sha256(external_id.encode('utf-8')).hexdigest()
+        self.verification_status = self.VERIFICATION_VERIFIED
+        self.save(update_fields=[
+            'is_verified_myid',
+            'myid_verified_at',
+            'myid_external_id_hash',
+            'verification_status',
+        ])
 
 
 class OTPCode(models.Model):
@@ -113,3 +129,47 @@ class KYCDocument(models.Model):
 
     def __str__(self):
         return f'KYC — {self.user.phone} [{self.status}]'
+
+
+class MyIDVerificationAttempt(models.Model):
+    STATUS_STARTED = 'started'
+    STATUS_SUCCESS = 'success'
+    STATUS_FAILED = 'failed'
+
+    STATUS_CHOICES = [
+        (STATUS_STARTED, 'Started'),
+        (STATUS_SUCCESS, 'Success'),
+        (STATUS_FAILED, 'Failed'),
+    ]
+
+    user = models.ForeignKey(CustomUser, on_delete=models.CASCADE, related_name='myid_attempts')
+    state = models.CharField(max_length=64, unique=True)
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default=STATUS_STARTED)
+    error = models.TextField(blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    finished_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ['-created_at']
+
+    def mark_success(self):
+        self.status = self.STATUS_SUCCESS
+        self.finished_at = timezone.now()
+        self.save(update_fields=['status', 'finished_at'])
+
+    def mark_failed(self, error: str):
+        self.status = self.STATUS_FAILED
+        self.error = error
+        self.finished_at = timezone.now()
+        self.save(update_fields=['status', 'error', 'finished_at'])
+
+
+class PhoneChangeRequest(models.Model):
+    user = models.ForeignKey(CustomUser, on_delete=models.CASCADE, related_name='phone_change_requests')
+    new_phone = models.CharField(max_length=20)
+    code = models.CharField(max_length=6)
+    created_at = models.DateTimeField(auto_now_add=True)
+    is_used = models.BooleanField(default=False)
+
+    class Meta:
+        ordering = ['-created_at']

@@ -1,7 +1,5 @@
 from rest_framework import serializers
-from mptt.templatetags.mptt_tags import cache_tree_children
 from .models import Category, Item, ItemImage, ItemAvailability
-from apps.users.serializers import ProfileSerializer
 
 
 class CategorySerializer(serializers.ModelSerializer):
@@ -50,9 +48,9 @@ class ItemListSerializer(serializers.ModelSerializer):
         model = Item
         fields = [
             'id', 'title', 'price_per_day', 'deposit',
-            'condition', 'city', 'address',
+            'condition', 'status', 'city', 'address',
             'category_name', 'primary_image',
-            'owner_name', 'created_at',
+            'owner_name', 'view_count', 'favorite_count', 'created_at',
         ]
 
     def get_primary_image(self, obj):
@@ -82,6 +80,7 @@ class ItemDetailSerializer(serializers.ModelSerializer):
             'id', 'title', 'description', 'price_per_day', 'deposit',
             'condition', 'status', 'city', 'address', 'latitude', 'longitude',
             'category', 'images', 'blocked_dates', 'owner', 'created_at',
+            'view_count', 'favorite_count', 'min_rental_days',
         ]
 
     def get_blocked_dates(self, obj):
@@ -115,7 +114,7 @@ class ItemCreateSerializer(serializers.ModelSerializer):
         fields = [
             'title', 'description', 'category',
             'price_per_day', 'deposit', 'condition',
-            'address', 'city', 'latitude', 'longitude',
+            'address', 'city', 'latitude', 'longitude', 'min_rental_days',
         ]
 
     def validate_price_per_day(self, value):
@@ -130,7 +129,7 @@ class ItemCreateSerializer(serializers.ModelSerializer):
 
     def create(self, validated_data):
         user = self.context['request'].user
-        item = Item.objects.create(owner=user, status=Item.STATUS_MODERATION, **validated_data)
+        item = Item.objects.create(owner=user, status=Item.STATUS_PENDING, **validated_data)
         # Create empty availability record
         ItemAvailability.objects.create(item=item)
         return item
@@ -142,11 +141,33 @@ class ItemUpdateSerializer(serializers.ModelSerializer):
         fields = [
             'title', 'description', 'category',
             'price_per_day', 'deposit', 'condition',
-            'address', 'city', 'latitude', 'longitude', 'status',
+            'address', 'city', 'latitude', 'longitude', 'min_rental_days', 'status',
         ]
 
     def validate_status(self, value):
-        # Owner can only toggle between active/inactive
-        if value == Item.STATUS_MODERATION:
-            raise serializers.ValidationError('Нельзя вручную установить статус "На модерации".')
+        request = self.context.get('request')
+        if request and request.user and request.user.is_staff:
+            return value
+        if value not in [Item.STATUS_INACTIVE, Item.STATUS_PENDING]:
+            raise serializers.ValidationError('Владелец может снять объявление или отправить его на повторную модерацию.')
         return value
+
+
+class ListingModerationSerializer(serializers.Serializer):
+    status = serializers.ChoiceField(choices=[
+        (Item.STATUS_APPROVED, 'approved'),
+        (Item.STATUS_REJECTED, 'rejected'),
+    ])
+    rejection_reason = serializers.CharField(required=False, allow_blank=True)
+
+    def validate(self, attrs):
+        if attrs['status'] == Item.STATUS_REJECTED and not attrs.get('rejection_reason'):
+            raise serializers.ValidationError({'rejection_reason': 'Укажите причину отклонения.'})
+        return attrs
+
+
+class ListingStatsSerializer(serializers.Serializer):
+    listing_id = serializers.IntegerField()
+    views = serializers.IntegerField()
+    favorites = serializers.IntegerField()
+    deals = serializers.IntegerField()

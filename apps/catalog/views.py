@@ -2,6 +2,8 @@ from rest_framework import generics, status, permissions
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework.parsers import MultiPartParser, FormParser
+from django.db import connection
+from django.db.models import F, Q
 from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework.filters import SearchFilter, OrderingFilter
 
@@ -14,6 +16,7 @@ from .serializers import (
     ItemUpdateSerializer,
     ItemImageSerializer,
     ItemImageUploadSerializer,
+    ListingModerationSerializer,
 )
 from .filters import ItemFilter
 
@@ -33,43 +36,101 @@ class CategoryListView(generics.ListAPIView):
         ).prefetch_related('children')
 
 
-class ItemListView(generics.ListAPIView):
+class ListingListCreateView(generics.ListCreateAPIView):
     """
-    GET /api/v1/catalog/
-    Список активных объявлений с фильтрацией и поиском.
+    GET/POST /api/v1/listings/
     """
-    permission_classes = [permissions.AllowAny]
-    serializer_class = ItemListSerializer
     filterset_class = ItemFilter
     filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
     search_fields = ['title', 'description', 'city']
-    ordering_fields = ['price_per_day', 'created_at']
+    ordering_fields = ['price_per_day', 'created_at', 'view_count']
     ordering = ['-created_at']
 
+    def get_permissions(self):
+        if self.request.method == 'POST':
+            return [permissions.IsAuthenticated()]
+        return [permissions.AllowAny()]
+
+    def get_serializer_class(self):
+        if self.request.method == 'POST':
+            return ItemCreateSerializer
+        return ItemListSerializer
+
     def get_queryset(self):
-        return (
+        qs = (
             Item.objects
-            .filter(status=Item.STATUS_ACTIVE)
+            .filter(status=Item.STATUS_APPROVED)
             .select_related('category', 'owner__profile')
             .prefetch_related('images')
         )
+        query = self.request.query_params.get('q')
+        if query:
+            if connection.vendor == 'postgresql':
+                from django.contrib.postgres.search import SearchQuery, SearchRank, SearchVector
+                vector = SearchVector('title', weight='A') + SearchVector('description', weight='B')
+                search_query = SearchQuery(query)
+                qs = qs.annotate(rank=SearchRank(vector, search_query)).filter(rank__gt=0)
+                if self.request.query_params.get('ordering') == 'relevance':
+                    qs = qs.order_by('-rank')
+            else:
+                qs = qs.filter(Q(title__icontains=query) | Q(description__icontains=query))
+        ordering = self.request.query_params.get('ordering')
+        if ordering == 'date':
+            qs = qs.order_by('-created_at')
+        elif ordering == 'price':
+            qs = qs.order_by('price_per_day')
+        elif ordering == '-price':
+            qs = qs.order_by('-price_per_day')
+        return qs
 
 
-class ItemDetailView(generics.RetrieveAPIView):
+class ItemListView(ListingListCreateView):
     """
-    GET /api/v1/catalog/{id}/
-    Полная карточка вещи с заблокированными датами.
+    Backward compatible GET /api/v1/catalog/.
     """
-    permission_classes = [permissions.AllowAny]
-    serializer_class = ItemDetailSerializer
+
+    http_method_names = ['get', 'head', 'options']
+
+
+class ListingDetailUpdateDestroyView(generics.RetrieveUpdateDestroyAPIView):
+    """
+    GET/PATCH/DELETE /api/v1/listings/{id}/
+    """
+    permission_classes = [permissions.IsAuthenticatedOrReadOnly]
+
+    def get_serializer_class(self):
+        if self.request.method in ['PATCH', 'PUT']:
+            return ItemUpdateSerializer
+        return ItemDetailSerializer
 
     def get_queryset(self):
+        if self.request.method in ['PATCH', 'PUT', 'DELETE']:
+            return Item.objects.filter(owner=self.request.user)
         return (
             Item.objects
-            .filter(status=Item.STATUS_ACTIVE)
+            .filter(status=Item.STATUS_APPROVED)
             .select_related('category', 'owner__profile', 'availability')
             .prefetch_related('images')
         )
+
+    def retrieve(self, request, *args, **kwargs):
+        instance = self.get_object()
+        Item.objects.filter(pk=instance.pk).update(view_count=F('view_count') + 1)
+        instance.view_count += 1
+        serializer = self.get_serializer(instance)
+        return Response(serializer.data)
+
+    def perform_destroy(self, instance):
+        instance.status = Item.STATUS_INACTIVE
+        instance.save(update_fields=['status'])
+
+
+class ItemDetailView(ListingDetailUpdateDestroyView):
+    """
+    Backward compatible GET /api/v1/catalog/{id}/.
+    """
+
+    http_method_names = ['get', 'head', 'options']
 
 
 class ItemCreateView(generics.CreateAPIView):
@@ -116,6 +177,40 @@ class ItemUpdateView(generics.RetrieveUpdateDestroyAPIView):
         # Soft-delete: set inactive
         instance.status = Item.STATUS_INACTIVE
         instance.save(update_fields=['status'])
+
+
+class ListingStatsView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request, pk):
+        try:
+            item = Item.objects.get(pk=pk, owner=request.user)
+        except Item.DoesNotExist:
+            return Response({'detail': 'Объявление не найдено.'}, status=status.HTTP_404_NOT_FOUND)
+
+        return Response({
+            'listing_id': item.pk,
+            'views': item.view_count,
+            'favorites': item.favorite_count,
+            'deals': item.bookings.count(),
+        })
+
+
+class ListingModerationView(APIView):
+    permission_classes = [permissions.IsAdminUser]
+
+    def post(self, request, pk):
+        try:
+            item = Item.objects.get(pk=pk)
+        except Item.DoesNotExist:
+            return Response({'detail': 'Объявление не найдено.'}, status=status.HTTP_404_NOT_FOUND)
+
+        serializer = ListingModerationSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        item.status = serializer.validated_data['status']
+        item.rejection_reason = serializer.validated_data.get('rejection_reason', '')
+        item.save(update_fields=['status', 'rejection_reason', 'updated_at'])
+        return Response(ItemDetailSerializer(item, context={'request': request}).data)
 
 
 class ItemImageUploadView(APIView):

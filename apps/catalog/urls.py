@@ -4,12 +4,24 @@ from .views import (
     ItemListView,
     ItemDetailView,
     ItemCreateView,
+    ListingDetailUpdateDestroyView,
+    ListingListCreateView,
+    ListingModerationView,
+    ListingStatsView,
     MyItemsView,
     ItemUpdateView,
     ItemImageUploadView,
 )
 
 urlpatterns = [
+    # Rentoo API contract
+    path('listings/', ListingListCreateView.as_view(), name='listing-list-create'),
+    path('listings/<int:pk>/', ListingDetailUpdateDestroyView.as_view(), name='listing-detail'),
+    path('listings/<int:pk>/stats/', ListingStatsView.as_view(), name='listing-stats'),
+    path('listings/<int:pk>/moderate/', ListingModerationView.as_view(), name='listing-moderate'),
+    path('listings/<int:item_id>/photos/', ItemImageUploadView.as_view(), name='listing-photo-upload'),
+    path('listings/<int:item_id>/photos/<int:image_id>/', ItemImageUploadView.as_view(), name='listing-photo-delete'),
+
     # Public
     path('categories/', CategoryListView.as_view(), name='category-list'),
     path('catalog/', ItemListView.as_view(), name='item-list'),

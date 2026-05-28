@@ -35,7 +35,7 @@ def send_otp_sms(phone: str, code: str) -> bool:
     if not token:
         return False
 
-    message = f'SYNTH Share: ваш код подтверждения — {code}. Действителен 2 минуты.'
+    message = f'Rentoo: ваш код подтверждения — {code}. Действителен 2 минуты.'
     try:
         resp = requests.post(
             ESKIZ_SEND_URL,

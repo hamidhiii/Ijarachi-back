@@ -1,8 +1,10 @@
 import hashlib
 import base64
 import logging
+from decimal import Decimal
 from django.conf import settings
 from django.db import transaction
+from django.utils import timezone
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
@@ -11,6 +13,41 @@ from .models import Payment
 from apps.bookings.models import Booking
 
 logger = logging.getLogger('apps.payments')
+
+
+def finalize_paid_payment(payment: Payment):
+    booking = payment.booking
+    if payment.status in [Payment.STATUS_PAID, Payment.STATUS_COMPLETED]:
+        return booking
+    payment.status = Payment.STATUS_PAID
+    payment.save(update_fields=['status', 'updated_at'])
+
+    booking.status = Booking.STATUS_PAID
+    booking.escrow_status = Booking.ESCROW_HELD
+    update_fields = ['status', 'escrow_status', 'updated_at']
+    if booking.delivery_method == Booking.DELIVERY_PICKUP:
+        booking.contact_revealed_at = timezone.now()
+        update_fields.append('contact_revealed_at')
+    booking.save(update_fields=update_fields)
+
+    from apps.payments.models import Transaction
+
+    amount_uzs = (Decimal(str(payment.amount)) / Decimal('100')).quantize(Decimal('1'))
+    Transaction.objects.create(
+        booking=booking,
+        payment=payment,
+        user=booking.renter,
+        type=Transaction.TYPE_ESCROW_HOLD,
+        amount=amount_uzs,
+        currency='UZS',
+        metadata={'provider': payment.provider},
+    )
+
+    if booking.delivery_method == Booking.DELIVERY_DELIVERY:
+        from apps.delivery.tasks import create_yandex_delivery_order
+        create_yandex_delivery_order.delay(booking.pk)
+
+    return booking
 
 
 # ─── Payme ────────────────────────────────────────────────────────────────────
@@ -110,11 +147,7 @@ class PaymeWebhookView(APIView):
             return Response({'id': rpc_id, 'error': {'code': -31003, 'message': 'Transaction not found'}})
 
         with transaction.atomic():
-            payment.status = Payment.STATUS_PAID
-            payment.save(update_fields=['status', 'updated_at'])
-
-            booking = payment.booking
-            booking.transition_to(Booking.STATUS_PLACED)
+            booking = finalize_paid_payment(payment)
 
             logger.info(
                 'Payment confirmed (Payme): booking #%s, amount=%s tiyin',
@@ -142,8 +175,10 @@ class PaymeWebhookView(APIView):
             payment.save(update_fields=['status', 'updated_at'])
 
             booking = payment.booking
-            if booking.status in (Booking.STATUS_PAYMENT_PENDING, Booking.STATUS_PLACED):
+            if booking.status in (Booking.STATUS_PENDING_PAYMENT, Booking.STATUS_PAID):
                 booking.transition_to(Booking.STATUS_CANCELLED)
+                booking.escrow_status = Booking.ESCROW_REFUNDED
+                booking.save(update_fields=['escrow_status', 'updated_at'])
                 # Unblock dates
                 try:
                     from apps.catalog.models import ItemAvailability
@@ -164,7 +199,7 @@ class PaymeWebhookView(APIView):
         transaction_id = params.get('id')
         try:
             payment = Payment.objects.get(provider_transaction_id=transaction_id)
-            state = 2 if payment.status == Payment.STATUS_PAID else 1
+            state = 2 if payment.status in [Payment.STATUS_PAID, Payment.STATUS_COMPLETED] else 1
             return Response({'id': rpc_id, 'result': {
                 'create_time': int(payment.created_at.timestamp() * 1000),
                 'perform_time': int(payment.updated_at.timestamp() * 1000),
@@ -246,9 +281,7 @@ class ClickWebhookView(APIView):
                 return Response({'error': -6, 'error_note': 'Transaction not found'})
 
             with transaction.atomic():
-                payment.status = Payment.STATUS_PAID
-                payment.save(update_fields=['status', 'updated_at'])
-                booking.transition_to(Booking.STATUS_PLACED)
+                booking = finalize_paid_payment(payment)
                 logger.info('Payment confirmed (Click): booking #%s', booking.pk)
 
             return Response({

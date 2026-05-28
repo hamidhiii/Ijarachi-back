@@ -10,12 +10,10 @@ def notify_owner_new_booking(self, booking_id: int):
     """Notify item owner about a new booking request."""
     try:
         from apps.bookings.models import Booking
-        from apps.users.sms import send_otp_sms
-
         booking = Booking.objects.select_related('item__owner', 'renter').get(pk=booking_id)
         owner = booking.item.owner
         message = (
-            f'SYNTH Share: новый запрос на аренду "{booking.item.title}" '
+            f'Rentoo: новый запрос на аренду "{booking.item.title}" '
             f'от {booking.renter.phone}. '
             f'Даты: {booking.start_date} — {booking.end_date}.'
         )
@@ -47,7 +45,7 @@ def notify_expiring_bookings(self):
         tomorrow = date.today() + timedelta(days=1)
         bookings = Booking.objects.filter(
             end_date=tomorrow,
-            status=Booking.STATUS_ACTIVE,
+            status=Booking.STATUS_IN_PROGRESS,
         ).select_related('renter', 'item')
 
         from apps.users.sms import _get_eskiz_token
@@ -55,7 +53,7 @@ def notify_expiring_bookings(self):
 
         for booking in bookings:
             message = (
-                f'SYNTH Share: срок аренды "{booking.item.title}" истекает завтра '
+                f'Rentoo: срок аренды "{booking.item.title}" истекает завтра '
                 f'({booking.end_date}). Пожалуйста, подготовьте вещь к возврату.'
             )
             logger.info('Expiry reminder → %s for booking #%s', booking.renter.phone, booking.pk)
@@ -79,12 +77,12 @@ def notify_expiring_bookings(self):
 def release_escrow(self, booking_id: int):
     """
     Triggered when booking is COMPLETED.
-    Platform keeps 15%, owner gets 85% credited to wallet_balance.
+    Platform keeps the configured commission, owner gets the payout credited to wallet_balance.
     """
     from decimal import Decimal
     try:
         from apps.bookings.models import Booking
-        from apps.payments.models import Payment
+        from apps.payments.models import Payment, Transaction
         from django.db import transaction as db_transaction
 
         booking = Booking.objects.select_related('item__owner__profile').get(pk=booking_id)
@@ -99,7 +97,9 @@ def release_escrow(self, booking_id: int):
 
         # amount stored in tiyin (×100), convert to sums
         total_sums = Decimal(str(payment.amount)) / 100
-        owner_payout = (total_sums * Decimal('0.85')).quantize(Decimal('1'))
+        commission_rate = Decimal(str(settings.PLATFORM_COMMISSION_PERCENT)) / Decimal('100')
+        rental_income = booking.price_per_day * booking.days
+        owner_payout = (rental_income * (Decimal('1') - commission_rate)).quantize(Decimal('1'))
 
         with db_transaction.atomic():
             profile = booking.item.owner.profile
@@ -109,8 +109,22 @@ def release_escrow(self, booking_id: int):
             payment.status = Payment.STATUS_COMPLETED
             payment.save(update_fields=['status', 'updated_at'])
 
+            booking.status = Booking.STATUS_COMPLETED
+            booking.escrow_status = Booking.ESCROW_RELEASED
+            booking.save(update_fields=['status', 'escrow_status', 'updated_at'])
+
+            Transaction.objects.create(
+                booking=booking,
+                payment=payment,
+                user=booking.item.owner,
+                type=Transaction.TYPE_PAYOUT,
+                amount=owner_payout,
+                currency='UZS',
+                metadata={'source': 'release_escrow'},
+            )
+
         logger.info(
-            'Escrow released for booking #%s: total=%s sums, owner payout=%s sums (85%%)',
+            'Escrow released for booking #%s: total=%s sums, owner payout=%s sums',
             booking_id, total_sums, owner_payout,
         )
 

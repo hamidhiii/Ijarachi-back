@@ -1,6 +1,6 @@
 from django.contrib import admin
 from django.contrib.auth.admin import UserAdmin
-from .models import CustomUser, Profile, OTPCode, KYCDocument
+from .models import CustomUser, Profile, OTPCode, KYCDocument, MyIDVerificationAttempt, PhoneChangeRequest
 
 
 @admin.register(CustomUser)
@@ -25,9 +25,10 @@ class CustomUserAdmin(UserAdmin):
 
 @admin.register(Profile)
 class ProfileAdmin(admin.ModelAdmin):
-    list_display = ['user', 'full_name', 'rating', 'verification_status']
-    list_filter = ['verification_status']
+    list_display = ['user', 'full_name', 'rating', 'verification_status', 'is_verified_myid', 'myid_verified_at']
+    list_filter = ['verification_status', 'is_verified_myid']
     search_fields = ['user__phone', 'full_name']
+    readonly_fields = ['myid_external_id_hash', 'myid_verified_at']
 
 
 @admin.register(OTPCode)
@@ -59,3 +60,18 @@ class KYCDocumentAdmin(admin.ModelAdmin):
         from django.utils import timezone
         queryset.update(status=KYCDocument.STATUS_REJECTED, reviewed_at=timezone.now())
     reject.short_description = 'Отклонить выбранные KYC'
+
+
+@admin.register(MyIDVerificationAttempt)
+class MyIDVerificationAttemptAdmin(admin.ModelAdmin):
+    list_display = ['user', 'state', 'status', 'created_at', 'finished_at']
+    list_filter = ['status']
+    search_fields = ['user__phone', 'state']
+    readonly_fields = ['state', 'status', 'error', 'created_at', 'finished_at']
+
+
+@admin.register(PhoneChangeRequest)
+class PhoneChangeRequestAdmin(admin.ModelAdmin):
+    list_display = ['user', 'new_phone', 'created_at', 'is_used']
+    list_filter = ['is_used']
+    search_fields = ['user__phone', 'new_phone']

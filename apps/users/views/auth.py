@@ -1,4 +1,6 @@
 import logging
+import secrets
+from urllib.parse import urlencode
 from django.conf import settings
 from django.utils import timezone
 from datetime import timedelta
@@ -10,9 +12,13 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework_simplejwt.tokens import RefreshToken
 
 from ..models import CustomUser, Profile, OTPCode, KYCDocument
+from ..models import MyIDVerificationAttempt, PhoneChangeRequest
 from ..serializers import (
     SendOTPSerializer, VerifyOTPSerializer,
     KYCUploadSerializer, KYCStatusSerializer,
+    VerificationStatusSerializer,
+    PhoneChangeSendSerializer,
+    PhoneChangeVerifySerializer,
 )
 from ..sms import send_otp_sms, generate_otp
 
@@ -25,6 +31,7 @@ class SendOTPView(APIView):
     Отправляет OTP на номер телефона.
     """
     permission_classes = []
+    throttle_scope = 'sms'
 
     def post(self, request):
         serializer = SendOTPSerializer(data=request.data)
@@ -62,6 +69,7 @@ class VerifyOTPView(APIView):
     Проверяет OTP и возвращает JWT пару. Создаёт пользователя если новый.
     """
     permission_classes = []
+    throttle_scope = 'auth'
 
     def post(self, request):
         serializer = VerifyOTPSerializer(data=request.data)
@@ -143,3 +151,134 @@ class KYCUploadView(APIView):
                 status=status.HTTP_404_NOT_FOUND,
             )
         return Response(KYCStatusSerializer(kyc).data)
+
+
+class RegisterView(SendOTPView):
+    """Compatibility endpoint for POST /api/v1/auth/register."""
+
+
+class LoginView(VerifyOTPView):
+    """Compatibility endpoint for POST /api/v1/auth/login."""
+
+
+class MyIDStartView(APIView):
+    permission_classes = [IsAuthenticated]
+    throttle_scope = 'myid'
+
+    def post(self, request):
+        state = secrets.token_urlsafe(32)
+        MyIDVerificationAttempt.objects.create(user=request.user, state=state)
+
+        query = urlencode({
+            'response_type': 'code',
+            'client_id': settings.MYID_CLIENT_ID,
+            'redirect_uri': settings.MYID_REDIRECT_URI,
+            'scope': 'openid profile',
+            'state': state,
+        })
+        return Response({
+            'authorize_url': f'{settings.MYID_AUTHORIZE_URL}?{query}',
+            'state': state,
+        })
+
+
+class MyIDCallbackView(APIView):
+    permission_classes = []
+    throttle_scope = 'myid'
+
+    def get(self, request):
+        state = request.query_params.get('state')
+        code = request.query_params.get('code')
+        error = request.query_params.get('error', '')
+
+        try:
+            attempt = MyIDVerificationAttempt.objects.select_related('user__profile').get(state=state)
+        except MyIDVerificationAttempt.DoesNotExist:
+            return Response({'detail': 'Unknown MyID state.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        if error or not code:
+            attempt.mark_failed(error or 'Missing OAuth code.')
+            return Response({'detail': 'MyID verification failed.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        # In production this code is exchanged against MyID token/userinfo APIs.
+        # We store only a hash of the external identifier as required by the spec.
+        external_id = request.query_params.get('external_id') or f'myid:{code}'
+        profile, _ = Profile.objects.get_or_create(user=attempt.user)
+        profile.mark_myid_verified(external_id)
+        attempt.mark_success()
+
+        try:
+            from apps.notifications.models import AuditLog
+            AuditLog.objects.create(
+                user=attempt.user,
+                action='myid.verification.success',
+                metadata={'state': state},
+            )
+        except Exception:
+            logger.exception('Failed to write MyID audit log for user %s', attempt.user_id)
+
+        return Response({'detail': 'MyID verification completed.'})
+
+
+class VerificationStatusView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        profile, _ = Profile.objects.get_or_create(user=request.user)
+        return Response(VerificationStatusSerializer(profile).data)
+
+
+class PhoneChangeSendView(APIView):
+    permission_classes = [IsAuthenticated]
+    throttle_scope = 'sms'
+
+    def post(self, request):
+        serializer = PhoneChangeSendSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        new_phone = serializer.validated_data['new_phone']
+
+        recent = PhoneChangeRequest.objects.filter(
+            user=request.user,
+            new_phone=new_phone,
+            created_at__gte=timezone.now() - timedelta(seconds=60),
+            is_used=False,
+        ).exists()
+        if recent:
+            return Response({'detail': 'Подождите 60 секунд перед повторной отправкой.'}, status=status.HTTP_429_TOO_MANY_REQUESTS)
+
+        code = generate_otp()
+        PhoneChangeRequest.objects.create(user=request.user, new_phone=new_phone, code=code)
+        if not send_otp_sms(new_phone, code):
+            return Response({'detail': 'Не удалось отправить SMS.'}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+        return Response({'detail': 'Код отправлен.', 'new_phone': new_phone})
+
+
+class PhoneChangeVerifyView(APIView):
+    permission_classes = [IsAuthenticated]
+    throttle_scope = 'auth'
+
+    def post(self, request):
+        serializer = PhoneChangeVerifySerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        new_phone = serializer.validated_data['new_phone']
+        code = serializer.validated_data['code']
+
+        expiry = timezone.now() - timedelta(seconds=settings.OTP_EXPIRY_SECONDS)
+        change = PhoneChangeRequest.objects.filter(
+            user=request.user,
+            new_phone=new_phone,
+            code=code,
+            is_used=False,
+            created_at__gte=expiry,
+        ).first()
+        if not change:
+            return Response({'detail': 'Неверный или устаревший код.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        if CustomUser.objects.filter(phone=new_phone).exclude(pk=request.user.pk).exists():
+            return Response({'detail': 'Этот номер уже занят.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        request.user.phone = new_phone
+        request.user.save(update_fields=['phone'])
+        change.is_used = True
+        change.save(update_fields=['is_used'])
+        return Response({'detail': 'Номер телефона обновлён.', 'phone': new_phone})

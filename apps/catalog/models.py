@@ -34,14 +34,18 @@ class Category(MPTTModel):
 
 
 class Item(models.Model):
-    STATUS_ACTIVE = 'active'
+    STATUS_APPROVED = 'approved'
+    STATUS_PENDING = 'pending'
+    STATUS_REJECTED = 'rejected'
     STATUS_INACTIVE = 'inactive'
-    STATUS_MODERATION = 'moderation'
+    STATUS_ACTIVE = STATUS_APPROVED
+    STATUS_MODERATION = STATUS_PENDING
 
     STATUS_CHOICES = [
-        (STATUS_ACTIVE, 'Активно'),
+        (STATUS_APPROVED, 'Одобрено'),
+        (STATUS_PENDING, 'На модерации'),
+        (STATUS_REJECTED, 'Отклонено'),
         (STATUS_INACTIVE, 'Неактивно'),
-        (STATUS_MODERATION, 'На модерации'),
     ]
 
     CONDITION_NEW = 'new'
@@ -74,7 +78,11 @@ class Item(models.Model):
     price_per_day = models.DecimalField('Цена за сутки (сум)', max_digits=12, decimal_places=0)
     deposit = models.DecimalField('Залог (сум)', max_digits=12, decimal_places=0, default=0)
     condition = models.CharField('Состояние', max_length=20, choices=CONDITION_CHOICES, default=CONDITION_GOOD)
-    status = models.CharField('Статус', max_length=20, choices=STATUS_CHOICES, default=STATUS_MODERATION)
+    status = models.CharField('Статус', max_length=20, choices=STATUS_CHOICES, default=STATUS_PENDING)
+    rejection_reason = models.TextField('Причина отклонения', blank=True)
+    view_count = models.PositiveIntegerField(default=0)
+    favorite_count = models.PositiveIntegerField(default=0)
+    min_rental_days = models.PositiveIntegerField(default=1)
 
     # Location
     address = models.CharField('Адрес', max_length=300)

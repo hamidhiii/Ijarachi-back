@@ -34,11 +34,15 @@ class ItemAdmin(admin.ModelAdmin):
         ('Даты', {'fields': ('created_at', 'updated_at')}),
     )
 
-    actions = ['activate', 'deactivate']
+    actions = ['approve', 'reject', 'deactivate']
 
-    def activate(self, request, queryset):
-        queryset.update(status=Item.STATUS_ACTIVE)
-    activate.short_description = 'Активировать выбранные объявления'
+    def approve(self, request, queryset):
+        queryset.update(status=Item.STATUS_APPROVED, rejection_reason='')
+    approve.short_description = 'Одобрить выбранные объявления'
+
+    def reject(self, request, queryset):
+        queryset.update(status=Item.STATUS_REJECTED)
+    reject.short_description = 'Отклонить выбранные объявления'
 
     def deactivate(self, request, queryset):
         queryset.update(status=Item.STATUS_INACTIVE)
