@@ -43,13 +43,28 @@ Backend часть для платформы шеринга (P2P аренды в
    *(При необходимости пропишите ключи доступа для Click, Payme и Eskiz)*
 3. Соберите и запустите контейнеры:
    ```bash
-   docker-compose up -d --build
+   docker compose up -d --build
    ```
 
 Первичный запуск автоматически:
 - Накатит все миграции на PostgreSQL.
 - Засеет базу данных категориями для "Той и праздники".
 - Поднимет веб-модуль Django (порт 8000), Celery Worker и Celery Beat.
+
+Docker Compose сам подставляет контейнерам `DB_HOST=db`, `DB_PORT=5432` и `REDIS_URL=redis://redis:6379/0`.
+В `.env` можно оставить `DB_HOST=localhost` для запуска Django напрямую на хосте.
+PostgreSQL и Redis в compose привязаны к `127.0.0.1`, чтобы не открывать их наружу на VPS.
+
+Если в логах PostgreSQL есть попытки `COPY ... TO PROGRAM`, создание неизвестных users/roles или скачивание файлов в `/tmp`, считайте текущий database volume скомпрометированным:
+
+```bash
+docker compose down
+docker volume rm ijarachi-back_postgres_data
+# затем задайте новый DB_PASSWORD в .env
+docker compose up -d --build
+```
+
+На продакшене дополнительно закройте порты `5432/5433` и `6379/6380` firewall-ом для внешнего доступа.
 
 ---
 
@@ -66,6 +81,8 @@ Backend часть для платформы шеринга (P2P аренды в
    pip install -r requirements.txt
    ```
 3. Поднимите локально PostgreSQL и Redis, передайте их данные в `.env`.
+   Для запуска без Docker используйте `DB_HOST=localhost` или `DB_HOST=127.0.0.1`.
+   Значение `DB_HOST=db` работает только внутри сети Docker Compose.
 4. Выполните миграции:
    ```bash
    python manage.py migrate
