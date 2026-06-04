@@ -11,7 +11,7 @@ Backend часть для платформы шеринга (P2P аренды в
 - **Фоновые задачи**: Celery + Celery Beat
 - **Авторизация**: JWT (SimpleJWT)
 - **Контейнеризация**: Docker & Docker Compose
-- **Провайдеры SMS/оплат/доставки/KYC**: Eskiz.uz, Payme, Click, Yandex Delivery, MyID
+- **Провайдеры SMS/оплат/KYC**: Eskiz.uz, Payme, Click, MyID
 
 ---
 
@@ -21,9 +21,8 @@ Backend часть для платформы шеринга (P2P аренды в
 2. **`catalog`** — Категории и объявления (`/listings`) с модерацией, фото, геолокацией, поиском и статистикой владельца.
 3. **`bookings`** — Сделки (`/deals`) со статусной машиной draft -> pending_payment -> paid -> in_progress -> returned -> completed/cancelled/disputed и защитой от двойного бронирования.
 4. **`payments`** — Интеграция с Payme (JSON-RPC) и Click (SHOP API). Логика временного удержания денег на счету компании до момента завершения сделки и возвращения залога (Escrow).
-5. **`delivery`** — Расчёт и webhook-и Yandex Delivery, Celery-заказы прямой и обратной доставки.
-6. **`chat`** — Conversation/Message, история через REST и realtime WebSocket.
-7. **`notifications`** — In-app уведомления, шаблоны и audit log.
+5. **`chat`** — Conversation/Message, история через REST и realtime WebSocket.
+6. **`notifications`** — In-app уведомления, шаблоны и audit log.
 
 ---
 
@@ -100,5 +99,3 @@ Backend часть для платформы шеринга (P2P аренды в
 - `notify_owner_new_booking`: Отправка SMS-уведомления владельцу (через Eskiz.uz) о новом запросе на сделку.
 - `notify_expiring_bookings`: Ежедневная задача (Beat), отправляющая напоминания тем арендаторам, чей срок аренды истекает на следующий день.
 - `release_escrow`: Асинхронный триггер для освобождения залога и выплаты денег владельцу после перевода сделки в статус `COMPLETED`.
-- `create_yandex_delivery_order`: Создание заказа доставки после успешной оплаты сделки.
-- `create_return_delivery_orders`: Планировщик обратной доставки за 24 часа до окончания аренды.

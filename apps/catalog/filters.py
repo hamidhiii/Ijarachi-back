@@ -11,6 +11,8 @@ class ItemFilter(django_filters.FilterSet):
     price_max = django_filters.NumberFilter(field_name='price_per_day', lookup_expr='lte')
     category = django_filters.NumberFilter(field_name='category__id')
     category_slug = django_filters.CharFilter(field_name='category__slug')
+    owner = django_filters.NumberFilter(field_name='owner__id')
+    owner_id = django_filters.NumberFilter(field_name='owner__id')
     city = django_filters.CharFilter(field_name='city', lookup_expr='icontains')
     condition = django_filters.ChoiceFilter(choices=Item.CONDITION_CHOICES)
     radius = django_filters.NumberFilter(method='filter_radius')
@@ -24,6 +26,8 @@ class ItemFilter(django_filters.FilterSet):
             'price_max',
             'category',
             'category_slug',
+            'owner',
+            'owner_id',
             'city',
             'condition',
             'radius',

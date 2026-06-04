@@ -5,14 +5,12 @@ from django.db import models
 class Notification(models.Model):
     TYPE_DEAL = 'deal'
     TYPE_PAYMENT = 'payment'
-    TYPE_DELIVERY = 'delivery'
     TYPE_CHAT = 'chat'
     TYPE_SYSTEM = 'system'
 
     TYPE_CHOICES = [
         (TYPE_DEAL, 'Deal'),
         (TYPE_PAYMENT, 'Payment'),
-        (TYPE_DELIVERY, 'Delivery'),
         (TYPE_CHAT, 'Chat'),
         (TYPE_SYSTEM, 'System'),
     ]

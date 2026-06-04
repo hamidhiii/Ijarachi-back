@@ -1,13 +1,6 @@
 from django.contrib import admin
-from .models import Booking, Deliverer
+from .models import Booking, BookingPhoto, DealReview
 from apps.payments.models import Payment
-
-
-@admin.register(Deliverer)
-class DelivererAdmin(admin.ModelAdmin):
-    list_display = ['id', 'name', 'phone', 'is_active']
-    list_filter = ['is_active']
-    search_fields = ['name', 'phone']
 
 
 class PaymentInline(admin.TabularInline):
@@ -17,18 +10,33 @@ class PaymentInline(admin.TabularInline):
     can_delete = False
 
 
+class BookingPhotoInline(admin.TabularInline):
+    model = BookingPhoto
+    extra = 0
+    fields = ['kind', 'image', 'comment', 'uploaded_by', 'created_at']
+    readonly_fields = ['created_at']
+    raw_id_fields = ['uploaded_by']
+
+
 @admin.register(Booking)
 class BookingAdmin(admin.ModelAdmin):
-    list_display = ['id', 'item', 'renter', 'start_date', 'end_date', 'delivery_method', 'total_price', 'status', 'escrow_status', 'created_at']
-    list_filter = ['status', 'escrow_status', 'delivery_method']
+    list_display = ['id', 'item', 'renter', 'start_date', 'end_date', 'total_price', 'status', 'escrow_status', 'created_at']
+    list_filter = ['status', 'escrow_status']
     search_fields = ['item__title', 'renter__phone']
-    raw_id_fields = ['item', 'renter', 'deliverer']
+    raw_id_fields = ['item', 'renter']
     readonly_fields = ['price_per_day', 'deposit_amount', 'commission_amount', 'total_price', 'created_at', 'updated_at']
-    inlines = [PaymentInline]
+    inlines = [PaymentInline, BookingPhotoInline]
     fieldsets = (
         ('Сделка', {'fields': ('item', 'renter', 'status', 'escrow_status', 'renter_comment', 'dispute_reason')}),
         ('Даты', {'fields': ('start_date', 'end_date')}),
-        ('Финансы', {'fields': ('price_per_day', 'deposit_amount', 'commission_amount', 'delivery_cost', 'total_price', 'escrow_amount')}),
-        ('Доставка', {'fields': ('delivery_method', 'delivery_address', 'delivery_lat', 'delivery_lng', 'delivery_comment', 'deliverer', 'pickup_eta', 'delivery_eta', 'yandex_delivery_order_id', 'yandex_delivery_status')}),
+        ('Финансы', {'fields': ('price_per_day', 'deposit_amount', 'commission_amount', 'total_price', 'escrow_amount')}),
         ('Системное', {'fields': ('created_at', 'updated_at')}),
     )
+
+
+@admin.register(DealReview)
+class DealReviewAdmin(admin.ModelAdmin):
+    list_display = ['id', 'booking', 'listing', 'reviewer', 'reviewee', 'rating', 'created_at']
+    list_filter = ['rating']
+    search_fields = ['listing__title', 'reviewer__phone', 'reviewee__phone', 'comment']
+    raw_id_fields = ['booking', 'listing', 'reviewer', 'reviewee']

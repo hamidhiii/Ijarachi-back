@@ -172,3 +172,16 @@ class ItemAvailability(models.Model):
             current += timedelta(days=1)
         self.blocked_dates = sorted(blocked)
         self.save(update_fields=['blocked_dates'])
+
+
+class Favorite(models.Model):
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='favorites')
+    item = models.ForeignKey(Item, on_delete=models.CASCADE, related_name='favorites')
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        unique_together = ('user', 'item')
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f'{self.user_id} -> {self.item_id}'

@@ -1,5 +1,7 @@
 from rest_framework import serializers
-from .models import Category, Item, ItemImage, ItemAvailability
+from django.utils.dateparse import parse_date
+
+from .models import Category, Favorite, Item, ItemImage, ItemAvailability
 
 
 class CategorySerializer(serializers.ModelSerializer):
@@ -43,6 +45,9 @@ class ItemListSerializer(serializers.ModelSerializer):
     primary_image = serializers.SerializerMethodField()
     category_name = serializers.CharField(source='category.name', read_only=True)
     owner_name = serializers.SerializerMethodField()
+    is_favorite = serializers.SerializerMethodField()
+    review_count = serializers.SerializerMethodField()
+    average_rating = serializers.SerializerMethodField()
 
     class Meta:
         model = Item
@@ -50,7 +55,8 @@ class ItemListSerializer(serializers.ModelSerializer):
             'id', 'title', 'price_per_day', 'deposit',
             'condition', 'status', 'city', 'address',
             'category_name', 'primary_image',
-            'owner_name', 'view_count', 'favorite_count', 'created_at',
+            'owner_name', 'view_count', 'favorite_count',
+            'is_favorite', 'review_count', 'average_rating', 'created_at',
         ]
 
     def get_primary_image(self, obj):
@@ -66,6 +72,21 @@ class ItemListSerializer(serializers.ModelSerializer):
         except Exception:
             return obj.owner.phone
 
+    def get_is_favorite(self, obj):
+        request = self.context.get('request')
+        user = getattr(request, 'user', None)
+        if not user or not user.is_authenticated:
+            return False
+        return Favorite.objects.filter(user=user, item=obj).exists()
+
+    def get_review_count(self, obj):
+        return obj.reviews.filter(reviewee=obj.owner).count()
+
+    def get_average_rating(self, obj):
+        from django.db.models import Avg
+        value = obj.reviews.filter(reviewee=obj.owner).aggregate(avg=Avg('rating'))['avg']
+        return round(value, 2) if value else 0
+
 
 class ItemDetailSerializer(serializers.ModelSerializer):
     """Full serializer for single item view."""
@@ -73,6 +94,9 @@ class ItemDetailSerializer(serializers.ModelSerializer):
     category = CategoryFlatSerializer(read_only=True)
     blocked_dates = serializers.SerializerMethodField()
     owner = serializers.SerializerMethodField()
+    is_favorite = serializers.SerializerMethodField()
+    review_count = serializers.SerializerMethodField()
+    average_rating = serializers.SerializerMethodField()
 
     class Meta:
         model = Item
@@ -81,6 +105,7 @@ class ItemDetailSerializer(serializers.ModelSerializer):
             'condition', 'status', 'city', 'address', 'latitude', 'longitude',
             'category', 'images', 'blocked_dates', 'owner', 'created_at',
             'view_count', 'favorite_count', 'min_rental_days',
+            'is_favorite', 'review_count', 'average_rating',
         ]
 
     def get_blocked_dates(self, obj):
@@ -106,6 +131,21 @@ class ItemDetailSerializer(serializers.ModelSerializer):
             }
         except Exception:
             return {'id': obj.owner.id, 'name': obj.owner.phone}
+
+    def get_is_favorite(self, obj):
+        request = self.context.get('request')
+        user = getattr(request, 'user', None)
+        if not user or not user.is_authenticated:
+            return False
+        return Favorite.objects.filter(user=user, item=obj).exists()
+
+    def get_review_count(self, obj):
+        return obj.reviews.filter(reviewee=obj.owner).count()
+
+    def get_average_rating(self, obj):
+        from django.db.models import Avg
+        value = obj.reviews.filter(reviewee=obj.owner).aggregate(avg=Avg('rating'))['avg']
+        return round(value, 2) if value else 0
 
 
 class ItemCreateSerializer(serializers.ModelSerializer):
@@ -171,3 +211,45 @@ class ListingStatsSerializer(serializers.Serializer):
     views = serializers.IntegerField()
     favorites = serializers.IntegerField()
     deals = serializers.IntegerField()
+
+
+class ListingAvailabilitySerializer(serializers.Serializer):
+    blocked_dates = serializers.ListField(child=serializers.CharField(), required=False)
+    blockedDates = serializers.ListField(child=serializers.CharField(), required=False, write_only=True)
+
+    def validate(self, attrs):
+        raw_dates = attrs.get('blocked_dates', attrs.get('blockedDates', []))
+        normalized = []
+        for value in raw_dates:
+            parsed = parse_date(str(value))
+            if not parsed:
+                raise serializers.ValidationError({'blocked_dates': f'Invalid date: {value}'})
+            normalized.append(parsed.isoformat())
+        attrs['blocked_dates'] = sorted(set(normalized))
+        return attrs
+
+
+class FavoriteSerializer(serializers.ModelSerializer):
+    listing_id = serializers.IntegerField(source='item_id', read_only=True)
+    listing = ItemListSerializer(source='item', read_only=True)
+
+    class Meta:
+        model = Favorite
+        fields = ['id', 'listing_id', 'listing', 'created_at']
+        read_only_fields = fields
+
+
+class FavoriteCreateSerializer(serializers.Serializer):
+    listing_id = serializers.IntegerField(required=False)
+    listing = serializers.IntegerField(required=False)
+
+    def validate(self, attrs):
+        listing_id = attrs.get('listing_id') or attrs.get('listing')
+        if not listing_id:
+            raise serializers.ValidationError({'listing_id': 'This field is required.'})
+        try:
+            item = Item.objects.get(pk=listing_id, status=Item.STATUS_APPROVED)
+        except Item.DoesNotExist:
+            raise serializers.ValidationError({'listing_id': 'Listing not found.'})
+        attrs['item'] = item
+        return attrs

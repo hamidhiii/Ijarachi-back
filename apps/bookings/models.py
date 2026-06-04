@@ -1,18 +1,5 @@
-from django.db import models
 from django.conf import settings
-
-
-class Deliverer(models.Model):
-    name = models.CharField('Имя', max_length=100)
-    phone = models.CharField('Телефон', max_length=20)
-    is_active = models.BooleanField('Активен', default=True)
-
-    class Meta:
-        verbose_name = 'Доставщик'
-        verbose_name_plural = 'Доставщики'
-
-    def __str__(self):
-        return f'{self.name} ({self.phone})'
+from django.db import models
 
 
 class Booking(models.Model):
@@ -41,14 +28,6 @@ class Booking(models.Model):
         (STATUS_COMPLETED, 'Completed'),
         (STATUS_CANCELLED, 'Cancelled'),
         (STATUS_DISPUTED, 'Disputed'),
-    ]
-
-    DELIVERY_PICKUP = 'pickup'
-    DELIVERY_DELIVERY = 'delivery'
-
-    DELIVERY_CHOICES = [
-        (DELIVERY_PICKUP, 'Pickup'),
-        (DELIVERY_DELIVERY, 'Delivery'),
     ]
 
     ESCROW_PENDING = 'pending'
@@ -107,26 +86,7 @@ class Booking(models.Model):
     price_per_day = models.DecimalField('Цена/день', max_digits=12, decimal_places=0)
     deposit_amount = models.DecimalField('Залог', max_digits=12, decimal_places=0)
     commission_amount = models.DecimalField('Комиссия платформы', max_digits=12, decimal_places=0)
-    delivery_cost = models.DecimalField('Стоимость доставки', max_digits=12, decimal_places=0, default=0)
     total_price = models.DecimalField('Итого', max_digits=12, decimal_places=0)
-
-    # Delivery
-    delivery_method = models.CharField(max_length=20, choices=DELIVERY_CHOICES, default=DELIVERY_PICKUP)
-    delivery_address = models.CharField('Адрес доставки', max_length=500, blank=True, default='')
-    delivery_lat = models.FloatField('Широта доставки', null=True, blank=True)
-    delivery_lng = models.FloatField('Долгота доставки', null=True, blank=True)
-    delivery_comment = models.TextField(blank=True)
-    yandex_delivery_order_id = models.CharField(max_length=120, blank=True)
-    yandex_delivery_status = models.CharField(max_length=80, blank=True)
-    deliverer = models.ForeignKey(
-        Deliverer,
-        on_delete=models.SET_NULL,
-        null=True, blank=True,
-        related_name='deliveries',
-        verbose_name='Доставщик',
-    )
-    pickup_eta = models.DateTimeField('ETA к владельцу', null=True, blank=True)
-    delivery_eta = models.DateTimeField('ETA к арендатору', null=True, blank=True)
 
     status = models.CharField('Статус', max_length=30, choices=STATUS_CHOICES, default=STATUS_DRAFT)
     escrow_status = models.CharField(max_length=20, choices=ESCROW_CHOICES, default=ESCROW_PENDING)
@@ -166,3 +126,45 @@ class Booking(models.Model):
         """Returns human-readable progress label for 'renter' or 'owner'."""
         mapping = self.PROGRESS_RENTER if role == 'renter' else self.PROGRESS_OWNER
         return mapping.get(self.status, self.status)
+
+
+class BookingPhoto(models.Model):
+    KIND_BEFORE = 'before'
+    KIND_AFTER = 'after'
+    KIND_ISSUE = 'issue'
+
+    KIND_CHOICES = [
+        (KIND_BEFORE, 'Before'),
+        (KIND_AFTER, 'After'),
+        (KIND_ISSUE, 'Issue'),
+    ]
+
+    booking = models.ForeignKey(Booking, on_delete=models.CASCADE, related_name='photos')
+    uploaded_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='booking_photos')
+    kind = models.CharField(max_length=20, choices=KIND_CHOICES)
+    image = models.ImageField(upload_to='deal_evidence/')
+    comment = models.TextField(blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['created_at']
+
+    def __str__(self):
+        return f'Booking photo #{self.pk} ({self.kind})'
+
+
+class DealReview(models.Model):
+    booking = models.ForeignKey(Booking, on_delete=models.CASCADE, related_name='reviews')
+    listing = models.ForeignKey('catalog.Item', on_delete=models.CASCADE, related_name='reviews')
+    reviewer = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='written_reviews')
+    reviewee = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='received_reviews')
+    rating = models.PositiveSmallIntegerField()
+    comment = models.TextField(blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        unique_together = ('booking', 'reviewer')
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f'Review #{self.pk}: {self.rating}'

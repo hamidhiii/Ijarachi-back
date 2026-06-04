@@ -24,10 +24,8 @@ def finalize_paid_payment(payment: Payment):
 
     booking.status = Booking.STATUS_PAID
     booking.escrow_status = Booking.ESCROW_HELD
-    update_fields = ['status', 'escrow_status', 'updated_at']
-    if booking.delivery_method == Booking.DELIVERY_PICKUP:
-        booking.contact_revealed_at = timezone.now()
-        update_fields.append('contact_revealed_at')
+    booking.contact_revealed_at = timezone.now()
+    update_fields = ['status', 'escrow_status', 'contact_revealed_at', 'updated_at']
     booking.save(update_fields=update_fields)
 
     from apps.payments.models import Transaction
@@ -43,9 +41,20 @@ def finalize_paid_payment(payment: Payment):
         metadata={'provider': payment.provider},
     )
 
-    if booking.delivery_method == Booking.DELIVERY_DELIVERY:
-        from apps.delivery.tasks import create_yandex_delivery_order
-        create_yandex_delivery_order.delay(booking.pk)
+    try:
+        from apps.chat.models import Conversation
+        from apps.notifications.models import Notification
+        from apps.notifications.tasks import create_notification
+
+        conversation = Conversation.objects.filter(deal=booking).first()
+        if not conversation:
+            conversation = Conversation.objects.create(deal=booking)
+        conversation.participants.add(booking.renter, booking.item.owner)
+        payload = {'booking_id': booking.pk, 'message': 'Чат по сделке открыт'}
+        create_notification(booking.renter, Notification.TYPE_CHAT, payload)
+        create_notification(booking.item.owner, Notification.TYPE_CHAT, payload)
+    except Exception as exc:
+        logger.exception('Failed to open paid booking chat for booking #%s: %s', booking.pk, exc)
 
     return booking
 

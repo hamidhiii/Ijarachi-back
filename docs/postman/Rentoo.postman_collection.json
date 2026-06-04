@@ -305,6 +305,26 @@
             },
             "url": "{{base_url}}/api/v1/kyc/upload/"
           }
+        },
+        {
+          "name": "Public User Profile",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/api/v1/users/{{owner_id}}/",
+            "auth": {
+              "type": "noauth"
+            }
+          }
+        },
+        {
+          "name": "Public User Listings",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/api/v1/users/{{owner_id}}/listings/",
+            "auth": {
+              "type": "noauth"
+            }
+          }
         }
       ]
     },
@@ -454,6 +474,93 @@
             "method": "GET",
             "url": "{{base_url}}/api/v1/items/my/"
           }
+        },
+        {
+          "name": "List Listings By Owner",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/api/v1/listings/?owner={{owner_id}}&ordering=date",
+            "auth": {
+              "type": "noauth"
+            }
+          }
+        },
+        {
+          "name": "Delete Listing",
+          "request": {
+            "method": "DELETE",
+            "url": "{{base_url}}/api/v1/listings/{{listing_id}}/"
+          }
+        },
+        {
+          "name": "Get Listing Availability",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/api/v1/listings/{{listing_id}}/availability/"
+          }
+        },
+        {
+          "name": "Update Listing Availability",
+          "request": {
+            "method": "PATCH",
+            "url": "{{base_url}}/api/v1/listings/{{listing_id}}/availability/",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"blocked_dates\": [\n    \"2026-06-15\",\n    \"2026-06-16\"\n  ]\n}"
+            }
+          }
+        },
+        {
+          "name": "Listing Reviews",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/api/v1/listings/{{listing_id}}/reviews/",
+            "auth": {
+              "type": "noauth"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Favorites",
+      "item": [
+        {
+          "name": "List Favorites",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/api/v1/favorites/"
+          }
+        },
+        {
+          "name": "Add Favorite",
+          "request": {
+            "method": "POST",
+            "url": "{{base_url}}/api/v1/favorites/",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"listing_id\": \"{{listing_id}}\"\n}"
+            }
+          }
+        },
+        {
+          "name": "Remove Favorite",
+          "request": {
+            "method": "DELETE",
+            "url": "{{base_url}}/api/v1/favorites/{{listing_id}}/"
+          }
         }
       ]
     },
@@ -498,7 +605,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"item\": {{listing_id}},\n  \"start_date\": \"2026-06-10\",\n  \"end_date\": \"2026-06-12\",\n  \"delivery_method\": \"pickup\",\n  \"delivery_address\": \"\",\n  \"renter_comment\": \"Need it by morning\"\n}"
+              "raw": "{\n  \"item\": {{listing_id}},\n  \"start_date\": \"2026-06-10\",\n  \"end_date\": \"2026-06-12\",\n  \"renter_comment\": \"Need it by morning\"\n}"
             },
             "url": "{{base_url}}/api/v1/deals/"
           }
@@ -508,23 +615,6 @@
           "request": {
             "method": "GET",
             "url": "{{base_url}}/api/v1/deals/{{deal_id}}/"
-          }
-        },
-        {
-          "name": "Calculate Deal Delivery",
-          "request": {
-            "method": "POST",
-            "header": [
-              {
-                "key": "Content-Type",
-                "value": "application/json"
-              }
-            ],
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"to_lat\": 41.3111,\n  \"to_lng\": 69.2797\n}"
-            },
-            "url": "{{base_url}}/api/v1/deals/{{deal_id}}/calculate-delivery/"
           }
         },
         {
@@ -596,16 +686,12 @@
             },
             "url": "{{base_url}}/api/v1/deals/{{deal_id}}/dispute/"
           }
-        }
-      ]
-    },
-    {
-      "name": "Delivery",
-      "item": [
+        },
         {
-          "name": "Calculate Delivery",
+          "name": "Create Deal Review",
           "request": {
             "method": "POST",
+            "url": "{{base_url}}/api/v1/deals/{{deal_id}}/review/",
             "header": [
               {
                 "key": "Content-Type",
@@ -614,29 +700,36 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"from_lat\": 41.2995,\n  \"from_lng\": 69.2401,\n  \"to_lat\": 41.3111,\n  \"to_lng\": 69.2797\n}"
-            },
-            "url": "{{base_url}}/api/v1/delivery/calculate/"
+              "raw": "{\n  \"rating\": 5,\n  \"comment\": \"Great owner, item matched the listing.\"\n}"
+            }
           }
         },
         {
-          "name": "Yandex Delivery Webhook",
+          "name": "Upload Deal Photo",
           "request": {
-            "auth": {
-              "type": "noauth"
-            },
             "method": "POST",
-            "header": [
-              {
-                "key": "Content-Type",
-                "value": "application/json"
-              }
-            ],
+            "header": [],
             "body": {
-              "mode": "raw",
-              "raw": "{\n  \"deal_id\": {{deal_id}},\n  \"yandex_order_id\": \"rentoo-{{deal_id}}-forward\",\n  \"status\": \"delivered\",\n  \"payload\": {\n    \"provider\": \"yandex\"\n  }\n}"
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "kind",
+                  "value": "before",
+                  "type": "text"
+                },
+                {
+                  "key": "comment",
+                  "value": "Before handoff",
+                  "type": "text"
+                },
+                {
+                  "key": "image",
+                  "type": "file",
+                  "src": ""
+                }
+              ]
             },
-            "url": "{{base_url}}/api/v1/delivery/webhook/"
+            "url": "{{base_url}}/api/v1/deals/{{deal_id}}/photos/"
           }
         }
       ]
@@ -648,35 +741,6 @@
           "name": "List Conversations",
           "request": {
             "method": "GET",
-            "url": "{{base_url}}/api/v1/chat/conversations/"
-          }
-        },
-        {
-          "name": "Create Conversation By Listing",
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "const json = pm.response.json();",
-                  "if (json.id) pm.environment.set('conversation_id', json.id);"
-                ]
-              }
-            }
-          ],
-          "request": {
-            "method": "POST",
-            "header": [
-              {
-                "key": "Content-Type",
-                "value": "application/json"
-              }
-            ],
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"listing_id\": {{listing_id}}\n}"
-            },
             "url": "{{base_url}}/api/v1/chat/conversations/"
           }
         },
@@ -739,6 +803,13 @@
             "method": "GET",
             "url": "{{ws_url}}/ws/chat/{{conversation_id}}/"
           }
+        },
+        {
+          "name": "Mark Conversation Read",
+          "request": {
+            "method": "POST",
+            "url": "{{base_url}}/api/v1/chat/conversations/{{conversation_id}}/read/"
+          }
         }
       ]
     },
@@ -770,6 +841,13 @@
           "request": {
             "method": "POST",
             "url": "{{base_url}}/api/v1/notifications/{{notification_id}}/read/"
+          }
+        },
+        {
+          "name": "Mark All Notifications Read",
+          "request": {
+            "method": "POST",
+            "url": "{{base_url}}/api/v1/notifications/read-all/"
           }
         }
       ]

@@ -32,11 +32,4 @@ class ConversationSerializer(serializers.ModelSerializer):
 
 
 class ConversationCreateSerializer(serializers.Serializer):
-    listing_id = serializers.IntegerField(required=False)
-    deal_id = serializers.IntegerField(required=False)
-    user_id = serializers.IntegerField(required=False)
-
-    def validate(self, attrs):
-        if not any(attrs.get(key) for key in ['listing_id', 'deal_id', 'user_id']):
-            raise serializers.ValidationError('Укажите listing_id, deal_id или user_id.')
-        return attrs
+    deal_id = serializers.IntegerField()

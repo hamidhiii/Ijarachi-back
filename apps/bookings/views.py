@@ -3,19 +3,21 @@ import logging
 from django.db import transaction
 from django.utils import timezone
 from rest_framework import generics, permissions, status
+from rest_framework.parsers import FormParser, MultiPartParser
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from .models import Booking
 from .serializers import (
-    AssignDelivererSerializer,
     BookingCreateSerializer,
     BookingDetailSerializer,
     BookingListSerializer,
+    BookingPhotoSerializer,
     BookingStatusUpdateSerializer,
+    DealReviewSerializer,
     DealPaySerializer,
-    DeliveryCalculationSerializer,
     DisputeSerializer,
+    refresh_user_rating,
 )
 from apps.catalog.models import ItemAvailability
 
@@ -53,7 +55,7 @@ class DealCreateView(generics.ListCreateAPIView):
         return BookingCreateSerializer
 
     def get_queryset(self):
-        return Booking.objects.filter(renter=self.request.user).select_related('item', 'renter', 'deliverer')
+        return Booking.objects.filter(renter=self.request.user).select_related('item', 'renter')
 
     def create(self, request, *args, **kwargs):
         if not user_is_myid_verified(request.user):
@@ -113,7 +115,7 @@ class MyDealsView(generics.ListAPIView):
 
     def get_queryset(self):
         role = self.request.query_params.get('role', 'renter')
-        qs = Booking.objects.select_related('item', 'renter', 'deliverer').prefetch_related('item__images')
+        qs = Booking.objects.select_related('item', 'renter').prefetch_related('item__images')
         if role == 'owner':
             return qs.filter(item__owner=self.request.user)
         return qs.filter(renter=self.request.user)
@@ -134,7 +136,7 @@ class DealDetailView(generics.RetrieveAPIView):
 
     def get_queryset(self):
         user = self.request.user
-        qs = Booking.objects.select_related('item__owner', 'renter', 'deliverer')
+        qs = Booking.objects.select_related('item__owner', 'renter').prefetch_related('photos')
         return qs.filter(renter=user) | qs.filter(item__owner=user)
 
 
@@ -198,47 +200,6 @@ class DealPayView(APIView):
         }, status=status.HTTP_201_CREATED)
 
 
-class DealCalculateDeliveryView(APIView):
-    permission_classes = [permissions.IsAuthenticated]
-
-    def post(self, request, pk):
-        try:
-            deal = Booking.objects.select_related('item', 'renter').get(pk=pk, renter=request.user)
-        except Booking.DoesNotExist:
-            return Response({'detail': 'Сделка не найдена.'}, status=status.HTTP_404_NOT_FOUND)
-
-        serializer = DeliveryCalculationSerializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
-
-        from apps.delivery.services import calculate_delivery_quote
-
-        from_lat = serializer.validated_data.get('from_lat') or deal.item.latitude
-        from_lng = serializer.validated_data.get('from_lng') or deal.item.longitude
-        quote = calculate_delivery_quote(
-            from_lat=from_lat,
-            from_lng=from_lng,
-            to_lat=serializer.validated_data['to_lat'],
-            to_lng=serializer.validated_data['to_lng'],
-        )
-
-        deal.delivery_method = Booking.DELIVERY_DELIVERY
-        deal.delivery_cost = quote['cost']
-        deal.delivery_lat = serializer.validated_data['to_lat']
-        deal.delivery_lng = serializer.validated_data['to_lng']
-        deal.total_price = deal.price_per_day * deal.days + deal.commission_amount + deal.deposit_amount + deal.delivery_cost
-        deal.escrow_amount = deal.total_price
-        deal.save(update_fields=[
-            'delivery_method',
-            'delivery_cost',
-            'delivery_lat',
-            'delivery_lng',
-            'total_price',
-            'escrow_amount',
-            'updated_at',
-        ])
-        return Response({'deal': BookingDetailSerializer(deal, context={'request': request}).data, 'delivery': quote})
-
-
 class ConfirmReturnView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
@@ -281,6 +242,64 @@ class DisputeView(APIView):
         return Response(BookingDetailSerializer(deal, context={'request': request}).data)
 
 
+class DealReviewView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request, pk):
+        try:
+            deal = Booking.objects.select_related('item__owner', 'renter').get(pk=pk)
+        except Booking.DoesNotExist:
+            return Response({'detail': 'Сделка не найдена.'}, status=status.HTTP_404_NOT_FOUND)
+
+        if request.user not in [deal.renter, deal.item.owner]:
+            return Response({'detail': 'Нет доступа к этой сделке.'}, status=status.HTTP_403_FORBIDDEN)
+        if deal.status not in [Booking.STATUS_COMPLETED, Booking.STATUS_RETURNED]:
+            return Response({'detail': 'Отзыв можно оставить после завершения или подтверждения возврата.'}, status=status.HTTP_400_BAD_REQUEST)
+        if deal.reviews.filter(reviewer=request.user).exists():
+            return Response({'detail': 'Вы уже оставили отзыв по этой сделке.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        serializer = DealReviewSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        reviewee = deal.item.owner if request.user == deal.renter else deal.renter
+        review = serializer.save(
+            booking=deal,
+            listing=deal.item,
+            reviewer=request.user,
+            reviewee=reviewee,
+        )
+        refresh_user_rating(reviewee)
+        return Response(DealReviewSerializer(review, context={'request': request}).data, status=status.HTTP_201_CREATED)
+
+
+class BookingPhotoUploadView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+    parser_classes = [MultiPartParser, FormParser]
+
+    ALLOWED_STATUSES = [
+        Booking.STATUS_PAID,
+        Booking.STATUS_IN_PROGRESS,
+        Booking.STATUS_RETURNED,
+        Booking.STATUS_COMPLETED,
+        Booking.STATUS_DISPUTED,
+    ]
+
+    def post(self, request, pk):
+        try:
+            deal = Booking.objects.select_related('item__owner', 'renter').get(pk=pk)
+        except Booking.DoesNotExist:
+            return Response({'detail': 'Сделка не найдена.'}, status=status.HTTP_404_NOT_FOUND)
+
+        if request.user not in [deal.renter, deal.item.owner]:
+            return Response({'detail': 'Нет доступа к этой сделке.'}, status=status.HTTP_403_FORBIDDEN)
+        if deal.status not in self.ALLOWED_STATUSES:
+            return Response({'detail': 'Фото можно добавить только после оплаты сделки.'}, status=status.HTTP_403_FORBIDDEN)
+
+        serializer = BookingPhotoSerializer(data=request.data, context={'request': request})
+        serializer.is_valid(raise_exception=True)
+        photo = serializer.save(booking=deal, uploaded_by=request.user)
+        return Response(BookingPhotoSerializer(photo, context={'request': request}).data, status=status.HTTP_201_CREATED)
+
+
 class BookingStatusUpdateView(APIView):
     """
     PATCH /api/v1/deals/{id}/status/ and legacy /bookings/{id}/status/.
@@ -289,7 +308,7 @@ class BookingStatusUpdateView(APIView):
 
     def patch(self, request, pk):
         try:
-            booking = Booking.objects.select_related('item__owner', 'renter', 'deliverer').get(pk=pk)
+            booking = Booking.objects.select_related('item__owner', 'renter').get(pk=pk)
         except Booking.DoesNotExist:
             return Response({'detail': 'Сделка не найдена.'}, status=status.HTTP_404_NOT_FOUND)
 
@@ -341,36 +360,3 @@ class BookingStatusUpdateView(APIView):
         booking.escrow_status = Booking.ESCROW_REFUNDED
         booking.save(update_fields=['escrow_status', 'updated_at'])
         logger.info('Booking #%s cancelled - payment refunded', booking.pk)
-
-
-class AssignDelivererView(APIView):
-    """
-    Legacy admin endpoint for assigning an internal deliverer.
-    """
-    permission_classes = [permissions.IsAdminUser]
-
-    def post(self, request, pk):
-        try:
-            booking = Booking.objects.select_related('item__owner', 'renter').get(pk=pk)
-        except Booking.DoesNotExist:
-            return Response({'detail': 'Сделка не найдена.'}, status=status.HTTP_404_NOT_FOUND)
-
-        if booking.status != Booking.STATUS_PAID:
-            return Response(
-                {'detail': f'Назначить доставщика можно только для статуса "paid", текущий: "{booking.status}".'},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-
-        serializer = AssignDelivererSerializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
-        deliverer = serializer.validated_data['deliverer_id']
-
-        with transaction.atomic():
-            booking.deliverer = deliverer
-            booking.pickup_eta = serializer.validated_data['pickup_eta']
-            booking.delivery_eta = serializer.validated_data['delivery_eta']
-            booking.save(update_fields=['deliverer', 'pickup_eta', 'delivery_eta', 'updated_at'])
-            booking.transition_to(Booking.STATUS_IN_PROGRESS)
-
-        logger.info('Booking #%s -> in_progress, deliverer=%s', booking.pk, deliverer)
-        return Response(BookingDetailSerializer(booking, context={'request': request}).data)

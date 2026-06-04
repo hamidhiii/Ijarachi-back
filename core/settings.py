@@ -10,7 +10,7 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 
 SECRET_KEY = config('SECRET_KEY', default='django-insecure-change-me-in-production')
 DEBUG = config('DEBUG', default=True, cast=bool)
-ALLOWED_HOSTS = config('ALLOWED_HOSTS', default='localhost,127.0.0.1').split(',')
+ALLOWED_HOSTS = config('ALLOWED_HOSTS', default='localhost,127.0.0.1,api.rentoo.uz').split(',')
 
 # ─── Apps ────────────────────────────────────────────────────────────────────
 
@@ -42,7 +42,6 @@ INSTALLED_APPS = [
     'apps.catalog',
     'apps.bookings',
     'apps.payments',
-    'apps.delivery',
     'apps.chat',
     'apps.notifications',
 ]
@@ -182,10 +181,6 @@ CELERY_BEAT_SCHEDULE = {
         'task': 'apps.bookings.tasks.notify_expiring_bookings',
         'schedule': crontab(hour=9, minute=0),
     },
-    'create-return-delivery-orders-daily': {
-        'task': 'apps.delivery.tasks.create_return_delivery_orders',
-        'schedule': crontab(hour=10, minute=0),
-    },
 }
 
 # ─── Media & Static ───────────────────────────────────────────────────────────
@@ -229,13 +224,6 @@ MYID_AUTHORIZE_URL = config('MYID_AUTHORIZE_URL', default='https://myid.uz/oauth
 MYID_TOKEN_URL = config('MYID_TOKEN_URL', default='https://myid.uz/oauth/token')
 MYID_USERINFO_URL = config('MYID_USERINFO_URL', default='https://myid.uz/api/userinfo')
 MYID_FIRST_DEAL_COST = config('MYID_FIRST_DEAL_COST', default=8000, cast=int)
-
-# Yandex Delivery / Go Business
-YANDEX_DELIVERY_API_KEY = config('YANDEX_DELIVERY_API_KEY', default='')
-YANDEX_DELIVERY_BASE_URL = config(
-    'YANDEX_DELIVERY_BASE_URL',
-    default='https://b2b.taxi.yandex.net/b2b/cargo/integration/v2',
-)
 
 # Push notifications
 FCM_SERVER_KEY = config('FCM_SERVER_KEY', default='')
@@ -289,11 +277,6 @@ LOGGING = {
             'propagate': False,
         },
         'apps.bookings': {
-            'handlers': ['console'],
-            'level': 'INFO',
-            'propagate': False,
-        },
-        'apps.delivery': {
             'handlers': ['console'],
             'level': 'INFO',
             'propagate': False,

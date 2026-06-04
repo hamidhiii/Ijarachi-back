@@ -1,50 +1,49 @@
-from django.contrib.auth import get_user_model
 from rest_framework import generics, status
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from apps.bookings.models import Booking
-from apps.catalog.models import Item
 from .models import Conversation, Message
 from .serializers import ConversationCreateSerializer, ConversationSerializer, MessageSerializer
-
-User = get_user_model()
 
 
 class ConversationListCreateView(APIView):
     permission_classes = [IsAuthenticated]
+    PAID_STATUSES = [
+        Booking.STATUS_PAID,
+        Booking.STATUS_IN_PROGRESS,
+        Booking.STATUS_RETURNED,
+        Booking.STATUS_COMPLETED,
+        Booking.STATUS_DISPUTED,
+    ]
 
     def get(self, request):
         qs = Conversation.objects.filter(participants=request.user).prefetch_related('participants', 'messages')
         return Response(ConversationSerializer(qs, many=True, context={'request': request}).data)
 
     def post(self, request):
+        if not request.data.get('deal_id'):
+            return Response({'detail': 'Чат открывается после оплаты сделки'}, status=status.HTTP_403_FORBIDDEN)
+
         serializer = ConversationCreateSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         data = serializer.validated_data
 
-        listing = None
-        deal = None
-        other_user = None
-
-        if data.get('deal_id'):
+        try:
             deal = Booking.objects.select_related('item__owner', 'renter').get(pk=data['deal_id'])
-            if request.user not in [deal.renter, deal.item.owner]:
-                return Response({'detail': 'Нет доступа к сделке.'}, status=status.HTTP_403_FORBIDDEN)
-            other_user = deal.item.owner if request.user == deal.renter else deal.renter
-        elif data.get('listing_id'):
-            listing = Item.objects.select_related('owner').get(pk=data['listing_id'])
-            other_user = listing.owner
-        elif data.get('user_id'):
-            other_user = User.objects.get(pk=data['user_id'])
+        except Booking.DoesNotExist:
+            return Response({'detail': 'Сделка не найдена.'}, status=status.HTTP_404_NOT_FOUND)
 
-        conversation = Conversation.objects.filter(
-            participants=request.user,
-        ).filter(participants=other_user, listing=listing, deal=deal).first()
+        if request.user not in [deal.renter, deal.item.owner]:
+            return Response({'detail': 'Нет доступа к сделке.'}, status=status.HTTP_403_FORBIDDEN)
+        if deal.status not in self.PAID_STATUSES:
+            return Response({'detail': 'Чат открывается после оплаты сделки'}, status=status.HTTP_403_FORBIDDEN)
+
+        conversation = Conversation.objects.filter(deal=deal).first()
         if not conversation:
-            conversation = Conversation.objects.create(listing=listing, deal=deal)
-            conversation.participants.add(request.user, other_user)
+            conversation = Conversation.objects.create(deal=deal)
+        conversation.participants.add(deal.renter, deal.item.owner)
 
         return Response(ConversationSerializer(conversation, context={'request': request}).data, status=status.HTTP_201_CREATED)
 
@@ -63,3 +62,16 @@ class MessageListView(generics.ListCreateAPIView):
         conversation = Conversation.objects.get(pk=self.kwargs['pk'], participants=self.request.user)
         serializer.save(conversation=conversation, sender=self.request.user)
         conversation.save(update_fields=['updated_at'])
+
+
+class ConversationReadView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, pk):
+        try:
+            conversation = Conversation.objects.get(pk=pk, participants=request.user)
+        except Conversation.DoesNotExist:
+            return Response({'detail': 'Conversation not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        updated = conversation.messages.exclude(sender=request.user).filter(is_read=False).update(is_read=True)
+        return Response({'detail': 'Conversation marked as read.', 'updated': updated})

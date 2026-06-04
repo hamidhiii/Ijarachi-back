@@ -1,9 +1,10 @@
 from decimal import Decimal
 
 from django.conf import settings
+from django.db.models import Avg
 from rest_framework import serializers
 
-from .models import Booking, Deliverer
+from .models import Booking, BookingPhoto, DealReview
 from apps.catalog.models import Item
 
 
@@ -18,12 +19,6 @@ class BookingCreateSerializer(serializers.ModelSerializer):
             'item',
             'start_date',
             'end_date',
-            'delivery_method',
-            'delivery_cost',
-            'delivery_address',
-            'delivery_lat',
-            'delivery_lng',
-            'delivery_comment',
             'renter_comment',
         ]
 
@@ -41,9 +36,6 @@ class BookingCreateSerializer(serializers.ModelSerializer):
         if item.owner == self.context['request'].user:
             raise serializers.ValidationError('Нельзя арендовать собственную вещь.')
 
-        if data.get('delivery_method') == Booking.DELIVERY_DELIVERY and not data.get('delivery_address'):
-            raise serializers.ValidationError({'delivery_address': 'Укажите адрес доставки.'})
-
         try:
             if not item.availability.is_available(start, end):
                 raise serializers.ValidationError('Выбранные даты уже заняты.')
@@ -60,8 +52,7 @@ class BookingCreateSerializer(serializers.ModelSerializer):
 
         rental_cost = item.price_per_day * days
         commission = (rental_cost * platform_commission_rate()).quantize(Decimal('1'))
-        delivery_cost = validated_data.get('delivery_cost') or Decimal('0')
-        total = rental_cost + commission + item.deposit + delivery_cost
+        total = rental_cost + commission + item.deposit
         initial_status = self.context.get('initial_status', Booking.STATUS_DRAFT)
 
         return Booking.objects.create(
@@ -72,23 +63,29 @@ class BookingCreateSerializer(serializers.ModelSerializer):
             price_per_day=item.price_per_day,
             deposit_amount=item.deposit,
             commission_amount=commission,
-            delivery_cost=delivery_cost,
             total_price=total,
-            delivery_method=validated_data.get('delivery_method', Booking.DELIVERY_PICKUP),
-            delivery_address=validated_data.get('delivery_address', ''),
-            delivery_lat=validated_data.get('delivery_lat'),
-            delivery_lng=validated_data.get('delivery_lng'),
-            delivery_comment=validated_data.get('delivery_comment', ''),
             renter_comment=validated_data.get('renter_comment', ''),
             escrow_amount=total,
             status=initial_status,
         )
 
 
-class DelivererSerializer(serializers.ModelSerializer):
+class BookingPhotoSerializer(serializers.ModelSerializer):
+    uploaded_by_phone = serializers.CharField(source='uploaded_by.phone', read_only=True)
+
     class Meta:
-        model = Deliverer
-        fields = ['id', 'name', 'phone']
+        model = BookingPhoto
+        fields = [
+            'id',
+            'booking',
+            'uploaded_by',
+            'uploaded_by_phone',
+            'kind',
+            'image',
+            'comment',
+            'created_at',
+        ]
+        read_only_fields = ['id', 'booking', 'uploaded_by', 'uploaded_by_phone', 'created_at']
 
 
 class BookingListSerializer(serializers.ModelSerializer):
@@ -107,8 +104,6 @@ class BookingListSerializer(serializers.ModelSerializer):
             'start_date',
             'end_date',
             'days',
-            'delivery_method',
-            'delivery_cost',
             'total_price',
             'status',
             'escrow_status',
@@ -118,9 +113,10 @@ class BookingListSerializer(serializers.ModelSerializer):
 
 class BookingDetailSerializer(serializers.ModelSerializer):
     days = serializers.IntegerField(read_only=True)
-    deliverer = DelivererSerializer(read_only=True)
+    photos = BookingPhotoSerializer(many=True, read_only=True)
     owner_phone = serializers.SerializerMethodField()
     owner_contact = serializers.SerializerMethodField()
+    renter_contact = serializers.SerializerMethodField()
     item_title = serializers.CharField(source='item.title', read_only=True)
     progress_renter = serializers.SerializerMethodField()
     progress_owner = serializers.SerializerMethodField()
@@ -134,24 +130,14 @@ class BookingDetailSerializer(serializers.ModelSerializer):
             'renter',
             'owner_phone',
             'owner_contact',
+            'renter_contact',
             'start_date',
             'end_date',
             'days',
             'price_per_day',
             'deposit_amount',
             'commission_amount',
-            'delivery_cost',
             'total_price',
-            'delivery_method',
-            'delivery_address',
-            'delivery_lat',
-            'delivery_lng',
-            'delivery_comment',
-            'deliverer',
-            'pickup_eta',
-            'delivery_eta',
-            'yandex_delivery_order_id',
-            'yandex_delivery_status',
             'status',
             'escrow_status',
             'escrow_amount',
@@ -161,6 +147,7 @@ class BookingDetailSerializer(serializers.ModelSerializer):
             'dispute_reason',
             'returned_at',
             'contact_revealed_at',
+            'photos',
             'created_at',
             'updated_at',
         ]
@@ -169,7 +156,6 @@ class BookingDetailSerializer(serializers.ModelSerializer):
             'price_per_day',
             'deposit_amount',
             'commission_amount',
-            'delivery_cost',
             'total_price',
             'escrow_status',
             'escrow_amount',
@@ -191,12 +177,12 @@ class BookingDetailSerializer(serializers.ModelSerializer):
                 user == obj.item.owner
                 or (
                     user == obj.renter
-                    and obj.delivery_method == Booking.DELIVERY_PICKUP
                     and obj.status in [
                         Booking.STATUS_PAID,
                         Booking.STATUS_IN_PROGRESS,
                         Booking.STATUS_RETURNED,
                         Booking.STATUS_COMPLETED,
+                        Booking.STATUS_DISPUTED,
                     ]
                 )
             )
@@ -214,23 +200,22 @@ class BookingDetailSerializer(serializers.ModelSerializer):
         contact = self.get_owner_contact(obj)
         return contact['phone'] if contact else None
 
-
-class AssignDelivererSerializer(serializers.Serializer):
-    """Admin-only: assign a deliverer and set ETAs."""
-    deliverer_id = serializers.IntegerField()
-    pickup_eta = serializers.DateTimeField()
-    delivery_eta = serializers.DateTimeField()
-
-    def validate_deliverer_id(self, value):
-        try:
-            return Deliverer.objects.get(pk=value, is_active=True)
-        except Deliverer.DoesNotExist:
-            raise serializers.ValidationError('Доставщик не найден или неактивен.')
-
-    def validate(self, data):
-        if data['pickup_eta'] >= data['delivery_eta']:
-            raise serializers.ValidationError('ETA к арендатору должна быть позже ETA к владельцу.')
-        return data
+    def get_renter_contact(self, obj):
+        request = self.context.get('request')
+        user = getattr(request, 'user', None)
+        if not user or not user.is_authenticated:
+            return None
+        if user != obj.item.owner:
+            return None
+        if obj.status not in [
+            Booking.STATUS_PAID,
+            Booking.STATUS_IN_PROGRESS,
+            Booking.STATUS_RETURNED,
+            Booking.STATUS_COMPLETED,
+            Booking.STATUS_DISPUTED,
+        ]:
+            return None
+        return {'phone': obj.renter.phone}
 
 
 class BookingStatusUpdateSerializer(serializers.Serializer):
@@ -278,12 +263,64 @@ class DealPaySerializer(serializers.Serializer):
     provider = serializers.ChoiceField(choices=['click', 'payme'])
 
 
-class DeliveryCalculationSerializer(serializers.Serializer):
-    from_lat = serializers.FloatField(required=False)
-    from_lng = serializers.FloatField(required=False)
-    to_lat = serializers.FloatField()
-    to_lng = serializers.FloatField()
-
-
 class DisputeSerializer(serializers.Serializer):
     reason = serializers.CharField()
+
+
+class DealReviewSerializer(serializers.ModelSerializer):
+    reviewer_name = serializers.SerializerMethodField()
+    reviewee_name = serializers.SerializerMethodField()
+    listing_id = serializers.IntegerField(source='listing.id', read_only=True)
+    deal_id = serializers.IntegerField(source='booking.id', read_only=True)
+
+    class Meta:
+        model = DealReview
+        fields = [
+            'id',
+            'deal_id',
+            'listing_id',
+            'reviewer',
+            'reviewer_name',
+            'reviewee',
+            'reviewee_name',
+            'rating',
+            'comment',
+            'created_at',
+        ]
+        read_only_fields = [
+            'id',
+            'deal_id',
+            'listing_id',
+            'reviewer',
+            'reviewer_name',
+            'reviewee',
+            'reviewee_name',
+            'created_at',
+        ]
+
+    def validate_rating(self, value):
+        if value < 1 or value > 5:
+            raise serializers.ValidationError('Rating must be between 1 and 5.')
+        return value
+
+    def get_reviewer_name(self, obj):
+        try:
+            return obj.reviewer.profile.full_name or obj.reviewer.phone
+        except Exception:
+            return obj.reviewer.phone
+
+    def get_reviewee_name(self, obj):
+        try:
+            return obj.reviewee.profile.full_name or obj.reviewee.phone
+        except Exception:
+            return obj.reviewee.phone
+
+
+def refresh_user_rating(user):
+    from apps.users.models import Profile
+
+    stats = user.received_reviews.aggregate(avg=Avg('rating'))
+    profile, _ = Profile.objects.get_or_create(user=user)
+    profile.rating = round(stats['avg'] or 0, 2)
+    profile.rating_count = user.received_reviews.count()
+    profile.save(update_fields=['rating', 'rating_count'])

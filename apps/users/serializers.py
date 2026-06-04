@@ -70,6 +70,69 @@ class ProfileSerializer(serializers.ModelSerializer):
         return super().update(instance, validated_data)
 
 
+class PublicUserSerializer(serializers.ModelSerializer):
+    full_name = serializers.SerializerMethodField()
+    avatar = serializers.SerializerMethodField()
+    rating = serializers.SerializerMethodField()
+    rating_count = serializers.SerializerMethodField()
+    is_verified_myid = serializers.SerializerMethodField()
+    verification_status = serializers.SerializerMethodField()
+
+    class Meta:
+        model = User
+        fields = [
+            'id',
+            'full_name',
+            'avatar',
+            'rating',
+            'rating_count',
+            'is_verified_myid',
+            'verification_status',
+            'date_joined',
+        ]
+        read_only_fields = fields
+
+    def get_avatar(self, obj):
+        try:
+            avatar = obj.profile.avatar
+        except Exception:
+            return None
+        if not avatar:
+            return None
+        request = self.context.get('request')
+        return request.build_absolute_uri(avatar.url) if request else avatar.url
+
+    def get_full_name(self, obj):
+        try:
+            return obj.profile.full_name
+        except Exception:
+            return ''
+
+    def get_rating(self, obj):
+        try:
+            return obj.profile.rating
+        except Exception:
+            return 0
+
+    def get_rating_count(self, obj):
+        try:
+            return obj.profile.rating_count
+        except Exception:
+            return 0
+
+    def get_is_verified_myid(self, obj):
+        try:
+            return obj.profile.is_verified_myid
+        except Exception:
+            return False
+
+    def get_verification_status(self, obj):
+        try:
+            return obj.profile.verification_status
+        except Exception:
+            return Profile.VERIFICATION_NONE
+
+
 # ─── KYC ──────────────────────────────────────────────────────────────────────
 
 class KYCUploadSerializer(serializers.ModelSerializer):

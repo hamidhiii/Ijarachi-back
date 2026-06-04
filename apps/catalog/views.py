@@ -7,7 +7,7 @@ from django.db.models import F, Q
 from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework.filters import SearchFilter, OrderingFilter
 
-from .models import Category, Item, ItemImage, ItemAvailability
+from .models import Category, Favorite, Item, ItemImage, ItemAvailability
 from .serializers import (
     CategorySerializer,
     ItemListSerializer,
@@ -16,6 +16,9 @@ from .serializers import (
     ItemUpdateSerializer,
     ItemImageSerializer,
     ItemImageUploadSerializer,
+    FavoriteCreateSerializer,
+    FavoriteSerializer,
+    ListingAvailabilitySerializer,
     ListingModerationSerializer,
 )
 from .filters import ItemFilter
@@ -196,6 +199,66 @@ class ListingStatsView(APIView):
         })
 
 
+class ListingAvailabilityView(APIView):
+    permission_classes = [permissions.IsAuthenticatedOrReadOnly]
+
+    def _get_item(self, request, pk, write=False):
+        qs = Item.objects.all()
+        if write:
+            qs = qs.filter(owner=request.user)
+        elif not request.user.is_authenticated:
+            qs = qs.filter(status=Item.STATUS_APPROVED)
+        else:
+            qs = qs.filter(Q(status=Item.STATUS_APPROVED) | Q(owner=request.user))
+        try:
+            return qs.get(pk=pk)
+        except Item.DoesNotExist:
+            return None
+
+    def get(self, request, pk):
+        item = self._get_item(request, pk)
+        if not item:
+            return Response({'detail': 'Объявление не найдено.'}, status=status.HTTP_404_NOT_FOUND)
+        availability, _ = ItemAvailability.objects.get_or_create(item=item)
+        return Response({
+            'listing_id': item.pk,
+            'blocked_dates': availability.blocked_dates,
+            'blockedDates': availability.blocked_dates,
+        })
+
+
+class ListingReviewsView(generics.ListAPIView):
+    permission_classes = [permissions.AllowAny]
+
+    def get_serializer_class(self):
+        from apps.bookings.serializers import DealReviewSerializer
+        return DealReviewSerializer
+
+    def get_queryset(self):
+        from apps.bookings.models import DealReview
+        return (
+            DealReview.objects
+            .filter(listing_id=self.kwargs['pk'], reviewee_id=F('listing__owner_id'))
+            .select_related('booking', 'listing', 'reviewer__profile', 'reviewee__profile')
+        )
+
+    def patch(self, request, pk):
+        item = self._get_item(request, pk, write=True)
+        if not item:
+            return Response({'detail': 'Объявление не найдено.'}, status=status.HTTP_404_NOT_FOUND)
+
+        serializer = ListingAvailabilitySerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        availability, _ = ItemAvailability.objects.get_or_create(item=item)
+        availability.blocked_dates = serializer.validated_data['blocked_dates']
+        availability.save(update_fields=['blocked_dates'])
+        return Response({
+            'listing_id': item.pk,
+            'blocked_dates': availability.blocked_dates,
+            'blockedDates': availability.blocked_dates,
+        })
+
+
 class ListingModerationView(APIView):
     permission_classes = [permissions.IsAdminUser]
 
@@ -211,6 +274,40 @@ class ListingModerationView(APIView):
         item.rejection_reason = serializer.validated_data.get('rejection_reason', '')
         item.save(update_fields=['status', 'rejection_reason', 'updated_at'])
         return Response(ItemDetailSerializer(item, context={'request': request}).data)
+
+
+class FavoriteListCreateView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request):
+        qs = Favorite.objects.filter(user=request.user).select_related('item', 'item__category', 'item__owner__profile')
+        return Response(FavoriteSerializer(qs, many=True, context={'request': request}).data)
+
+    def post(self, request):
+        serializer = FavoriteCreateSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        favorite, created = Favorite.objects.get_or_create(
+            user=request.user,
+            item=serializer.validated_data['item'],
+        )
+        if created:
+            Item.objects.filter(pk=favorite.item_id).update(favorite_count=F('favorite_count') + 1)
+            favorite.item.favorite_count += 1
+        return Response(
+            FavoriteSerializer(favorite, context={'request': request}).data,
+            status=status.HTTP_201_CREATED if created else status.HTTP_200_OK,
+        )
+
+
+class FavoriteDeleteView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def delete(self, request, listing_id):
+        deleted, _ = Favorite.objects.filter(user=request.user, item_id=listing_id).delete()
+        if not deleted:
+            return Response({'detail': 'Favorite not found.'}, status=status.HTTP_404_NOT_FOUND)
+        Item.objects.filter(pk=listing_id, favorite_count__gt=0).update(favorite_count=F('favorite_count') - 1)
+        return Response(status=status.HTTP_204_NO_CONTENT)
 
 
 class ItemImageUploadView(APIView):

@@ -1,6 +1,6 @@
 from django.contrib import admin
 from mptt.admin import DraggableMPTTAdmin
-from .models import Category, Item, ItemImage, ItemAvailability
+from .models import Category, Favorite, Item, ItemImage, ItemAvailability
 
 
 @admin.register(Category)
@@ -57,3 +57,10 @@ class ItemAvailabilityAdmin(admin.ModelAdmin):
     def blocked_count(self, obj):
         return len(obj.blocked_dates)
     blocked_count.short_description = 'Заблокировано дат'
+
+
+@admin.register(Favorite)
+class FavoriteAdmin(admin.ModelAdmin):
+    list_display = ['id', 'user', 'item', 'created_at']
+    search_fields = ['user__phone', 'item__title']
+    raw_id_fields = ['user', 'item']
