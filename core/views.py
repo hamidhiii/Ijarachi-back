@@ -27,7 +27,7 @@ class AdminDashboardView(APIView):
             'generated_at': timezone.now(),
             'users': {
                 'total': CustomUser.objects.count(),
-                'verified_myid': CustomUser.objects.filter(profile__is_verified_myid=True).count(),
+                'verified_kyc': CustomUser.objects.filter(profile__is_verified_kyc=True).count(),
             },
             'listings': dict(
                 Item.objects.values('status').annotate(count=Count('id')).values_list('status', 'count')

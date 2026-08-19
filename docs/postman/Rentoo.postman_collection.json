@@ -222,7 +222,7 @@
       ]
     },
     {
-      "name": "Users / MyID",
+      "name": "Users",
       "item": [
         {
           "name": "Get Profile",
@@ -253,35 +253,6 @@
           "request": {
             "method": "GET",
             "url": "{{base_url}}/api/v1/users/me/verification/"
-          }
-        },
-        {
-          "name": "MyID Start",
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "const json = pm.response.json();",
-                  "if (json.state) pm.environment.set('myid_state', json.state);"
-                ]
-              }
-            }
-          ],
-          "request": {
-            "method": "POST",
-            "url": "{{base_url}}/api/v1/myid/start/"
-          }
-        },
-        {
-          "name": "MyID Callback Dev",
-          "request": {
-            "auth": {
-              "type": "noauth"
-            },
-            "method": "GET",
-            "url": "{{base_url}}/api/v1/myid/callback/?state={{myid_state}}&code=dev-code&external_id=dev-myid-001"
           }
         },
         {
@@ -324,6 +295,97 @@
             "auth": {
               "type": "noauth"
             }
+          }
+        }
+      ]
+    },
+    {
+      "name": "KYC (passport + face)",
+      "item": [
+        {
+          "name": "1. Passport Upload",
+          "request": {
+            "method": "POST",
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "document_type",
+                  "value": "id_card",
+                  "type": "text",
+                  "description": "id_card or passport"
+                },
+                {
+                  "key": "front_image",
+                  "type": "file",
+                  "src": []
+                },
+                {
+                  "key": "back_image",
+                  "type": "file",
+                  "src": []
+                }
+              ]
+            },
+            "url": "{{base_url}}/api/v1/kyc/passport/upload/"
+          }
+        },
+        {
+          "name": "1. Passport Status",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/api/v1/kyc/passport/upload/"
+          }
+        },
+        {
+          "name": "2. Passport Confirm",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"series\": \"AD\",\n  \"number\": \"1234567\",\n  \"pinfl\": \"12345678901234\",\n  \"full_name\": \"TEST USER\",\n  \"birth_date\": \"1990-01-01\",\n  \"issue_date\": \"2020-01-01\",\n  \"expiry_date\": \"2030-01-01\"\n}"
+            },
+            "url": "{{base_url}}/api/v1/kyc/passport/confirm/"
+          }
+        },
+        {
+          "name": "3. Face Verify",
+          "request": {
+            "method": "POST",
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "frame_1",
+                  "type": "file",
+                  "src": []
+                },
+                {
+                  "key": "frame_2",
+                  "type": "file",
+                  "src": []
+                },
+                {
+                  "key": "frame_3",
+                  "type": "file",
+                  "src": []
+                }
+              ]
+            },
+            "url": "{{base_url}}/api/v1/kyc/face/verify/"
+          }
+        },
+        {
+          "name": "3. Face Verify Status",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/api/v1/kyc/face/verify/"
           }
         }
       ]
@@ -985,7 +1047,7 @@
               "type": "noauth"
             },
             "method": "GET",
-            "url": "{{base_url}}/api/schema/swagger-ui/"
+            "url": "{{base_url}}/api/docs/"
           }
         },
         {

@@ -6,22 +6,42 @@ import requests
 
 logger = logging.getLogger(__name__)
 
-ESKIZ_TOKEN_URL = 'https://notify.eskiz.uz/api/auth/login'
-ESKIZ_SEND_URL = 'https://notify.eskiz.uz/api/message/sms/send'
-
 
 def _get_eskiz_token() -> str | None:
     """Obtain bearer token from Eskiz.uz."""
     try:
-        resp = requests.post(ESKIZ_TOKEN_URL, data={
+        resp = requests.post(f'{settings.ESKIZ_BASE_URL}/auth/login', data={
             'email': settings.ESKIZ_EMAIL,
             'password': settings.ESKIZ_PASSWORD,
-        }, timeout=10)
+        }, timeout=settings.SMS_REQUEST_TIMEOUT_SECONDS)
         resp.raise_for_status()
         return resp.json()['data']['token']
     except Exception as exc:
         logger.error('Eskiz auth failed: %s', exc)
         return None
+
+
+def send_sms(phone: str, message: str) -> bool:
+    """Send a raw SMS message via Eskiz.uz. Returns True on success."""
+    token = _get_eskiz_token()
+    if not token:
+        return False
+    try:
+        resp = requests.post(
+            f'{settings.ESKIZ_BASE_URL}/message/sms/send',
+            headers={'Authorization': f'Bearer {token}'},
+            data={
+                'mobile_phone': phone.lstrip('+'),
+                'message': message,
+                'from': settings.ESKIZ_SENDER_ID,
+            },
+            timeout=settings.SMS_REQUEST_TIMEOUT_SECONDS,
+        )
+        resp.raise_for_status()
+        return True
+    except Exception as exc:
+        logger.error('Eskiz SMS send failed for %s: %s', phone, exc)
+        return False
 
 
 def send_otp_sms(phone: str, code: str) -> bool:
@@ -31,27 +51,9 @@ def send_otp_sms(phone: str, code: str) -> bool:
         logger.info('[DEV] OTP for %s: %s', phone, code)
         return True
 
-    token = _get_eskiz_token()
-    if not token:
-        return False
-
-    message = f'Rentoo: ваш код подтверждения — {code}. Действителен 2 минуты.'
-    try:
-        resp = requests.post(
-            ESKIZ_SEND_URL,
-            headers={'Authorization': f'Bearer {token}'},
-            data={
-                'mobile_phone': phone.lstrip('+'),
-                'message': message,
-                'from': '4546',
-            },
-            timeout=10,
-        )
-        resp.raise_for_status()
-        return True
-    except Exception as exc:
-        logger.error('Eskiz SMS send failed for %s: %s', phone, exc)
-        return False
+    minutes = max(1, settings.OTP_EXPIRY_SECONDS // 60)
+    message = f'Rentoo: ваш код подтверждения — {code}. Действителен {minutes} мин.'
+    return send_sms(phone, message)
 
 
 def generate_otp(length: int = 6) -> str:

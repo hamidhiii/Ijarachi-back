@@ -8,9 +8,12 @@ os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'core.settings')
 
 django_asgi_app = get_asgi_application()
 
-from apps.chat.routing import websocket_urlpatterns
+from apps.chat.routing import websocket_urlpatterns as chat_websocket_urlpatterns
+from apps.notifications.routing import websocket_urlpatterns as notifications_websocket_urlpatterns
 
 application = ProtocolTypeRouter({
     'http': django_asgi_app,
-    'websocket': AuthMiddlewareStack(URLRouter(websocket_urlpatterns)),
+    'websocket': AuthMiddlewareStack(
+        URLRouter(chat_websocket_urlpatterns + notifications_websocket_urlpatterns)
+    ),
 })

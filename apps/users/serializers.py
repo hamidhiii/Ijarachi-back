@@ -1,9 +1,13 @@
+import re
+
 from rest_framework import serializers
 from rest_framework_simplejwt.tokens import RefreshToken
 from django.contrib.auth import get_user_model
-from .models import Profile, KYCDocument, MyIDVerificationAttempt
+from .models import Profile, KYCDocument, PassportDocument, FaceVerification
 
 User = get_user_model()
+
+re_series = re.compile(r'[A-Z]{2}')
 
 
 def normalize_uz_phone(value: str) -> str:
@@ -51,15 +55,15 @@ class ProfileSerializer(serializers.ModelSerializer):
         fields = [
             'phone', 'email', 'full_name', 'avatar',
             'rating', 'rating_count', 'verification_status', 'wallet_balance',
-            'is_verified_myid', 'myid_verified_at',
+            'is_verified_kyc', 'kyc_verified_at',
         ]
         read_only_fields = [
             'rating',
             'rating_count',
             'verification_status',
             'wallet_balance',
-            'is_verified_myid',
-            'myid_verified_at',
+            'is_verified_kyc',
+            'kyc_verified_at',
         ]
 
     def update(self, instance, validated_data):
@@ -75,7 +79,7 @@ class PublicUserSerializer(serializers.ModelSerializer):
     avatar = serializers.SerializerMethodField()
     rating = serializers.SerializerMethodField()
     rating_count = serializers.SerializerMethodField()
-    is_verified_myid = serializers.SerializerMethodField()
+    is_verified_kyc = serializers.SerializerMethodField()
     verification_status = serializers.SerializerMethodField()
 
     class Meta:
@@ -86,7 +90,7 @@ class PublicUserSerializer(serializers.ModelSerializer):
             'avatar',
             'rating',
             'rating_count',
-            'is_verified_myid',
+            'is_verified_kyc',
             'verification_status',
             'date_joined',
         ]
@@ -120,9 +124,9 @@ class PublicUserSerializer(serializers.ModelSerializer):
         except Exception:
             return 0
 
-    def get_is_verified_myid(self, obj):
+    def get_is_verified_kyc(self, obj):
         try:
-            return obj.profile.is_verified_myid
+            return obj.profile.is_verified_kyc
         except Exception:
             return False
 
@@ -168,21 +172,78 @@ class VerificationStatusSerializer(serializers.ModelSerializer):
         fields = [
             'phone',
             'verification_status',
-            'is_verified_myid',
-            'myid_verified_at',
+            'is_verified_kyc',
+            'kyc_verified_at',
         ]
         read_only_fields = fields
 
 
-class MyIDStartResponseSerializer(serializers.Serializer):
-    authorize_url = serializers.URLField()
-    state = serializers.CharField()
+# ─── KYC: паспорт/ID-карта ─────────────────────────────────────────────────────
+
+class PassportUploadSerializer(serializers.Serializer):
+    document_type = serializers.ChoiceField(
+        choices=PassportDocument.TYPE_CHOICES, default=PassportDocument.TYPE_ID_CARD
+    )
+    front_image = serializers.ImageField()
+    back_image = serializers.ImageField(required=False, allow_null=True)
 
 
-class MyIDAttemptSerializer(serializers.ModelSerializer):
+class PassportConfirmSerializer(serializers.Serializer):
+    """Клиент подтверждает/правит данные, распознанные OCR, перед финальной проверкой."""
+    series = serializers.CharField(max_length=10)
+    number = serializers.CharField(max_length=20)
+    pinfl = serializers.CharField(max_length=14)
+    full_name = serializers.CharField(max_length=200)
+    birth_date = serializers.DateField()
+    issue_date = serializers.DateField(required=False, allow_null=True)
+    expiry_date = serializers.DateField(required=False, allow_null=True)
+
+    def validate_series(self, value):
+        value = value.strip().upper()
+        if not re_series.fullmatch(value):
+            raise serializers.ValidationError('Серия должна состоять из 2 латинских букв, напр. "AD".')
+        return value
+
+    def validate_number(self, value):
+        value = value.strip()
+        if not value.isdigit() or len(value) != 7:
+            raise serializers.ValidationError('Номер документа должен состоять из 7 цифр.')
+        return value
+
+    def validate_pinfl(self, value):
+        value = value.strip()
+        if not value.isdigit() or len(value) != 14:
+            raise serializers.ValidationError('ПИНФЛ должен состоять из 14 цифр.')
+        return value
+
+
+class PassportStatusSerializer(serializers.ModelSerializer):
     class Meta:
-        model = MyIDVerificationAttempt
-        fields = ['state', 'status', 'error', 'created_at', 'finished_at']
+        model = PassportDocument
+        fields = [
+            'document_type', 'series', 'number', 'pinfl', 'full_name',
+            'birth_date', 'issue_date', 'expiry_date',
+            'status', 'reject_reason', 'submitted_at', 'verified_at',
+        ]
+        read_only_fields = fields
+
+
+# ─── KYC: сверка лица (face match + liveness) ──────────────────────────────────
+
+class FaceVerifySerializer(serializers.Serializer):
+    frame_1 = serializers.ImageField()
+    frame_2 = serializers.ImageField(required=False, allow_null=True)
+    frame_3 = serializers.ImageField(required=False, allow_null=True)
+
+
+class FaceVerificationStatusSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = FaceVerification
+        fields = [
+            'status', 'face_match_score', 'face_match_passed',
+            'liveness_score', 'liveness_passed', 'fail_reason',
+            'submitted_at', 'verified_at',
+        ]
         read_only_fields = fields
 
 

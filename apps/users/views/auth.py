@@ -1,6 +1,4 @@
 import logging
-import secrets
-from urllib.parse import urlencode
 from django.conf import settings
 from django.utils import timezone
 from datetime import timedelta
@@ -12,7 +10,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework_simplejwt.tokens import RefreshToken
 
 from ..models import CustomUser, Profile, OTPCode, KYCDocument
-from ..models import MyIDVerificationAttempt, PhoneChangeRequest
+from ..models import PhoneChangeRequest
 from ..serializers import (
     SendOTPSerializer, VerifyOTPSerializer,
     KYCUploadSerializer, KYCStatusSerializer,
@@ -38,15 +36,16 @@ class SendOTPView(APIView):
         serializer.is_valid(raise_exception=True)
         phone = serializer.validated_data['phone']
 
-        # Rate-limit: не чаще раза в 60 секунд
+        # Rate-limit: не чаще раза в OTP_RESEND_COOLDOWN_SECONDS
+        cooldown = settings.OTP_RESEND_COOLDOWN_SECONDS
         recent = OTPCode.objects.filter(
             phone=phone,
-            created_at__gte=timezone.now() - timedelta(seconds=60),
+            created_at__gte=timezone.now() - timedelta(seconds=cooldown),
             is_used=False,
         ).exists()
         if recent:
             return Response(
-                {'detail': 'Подождите 60 секунд перед повторной отправкой.'},
+                {'detail': f'Подождите {cooldown} секунд перед повторной отправкой.'},
                 status=status.HTTP_429_TOO_MANY_REQUESTS,
             )
 
@@ -161,65 +160,6 @@ class LoginView(VerifyOTPView):
     """Compatibility endpoint for POST /api/v1/auth/login."""
 
 
-class MyIDStartView(APIView):
-    permission_classes = [IsAuthenticated]
-    throttle_scope = 'myid'
-
-    def post(self, request):
-        state = secrets.token_urlsafe(32)
-        MyIDVerificationAttempt.objects.create(user=request.user, state=state)
-
-        query = urlencode({
-            'response_type': 'code',
-            'client_id': settings.MYID_CLIENT_ID,
-            'redirect_uri': settings.MYID_REDIRECT_URI,
-            'scope': 'openid profile',
-            'state': state,
-        })
-        return Response({
-            'authorize_url': f'{settings.MYID_AUTHORIZE_URL}?{query}',
-            'state': state,
-        })
-
-
-class MyIDCallbackView(APIView):
-    permission_classes = []
-    throttle_scope = 'myid'
-
-    def get(self, request):
-        state = request.query_params.get('state')
-        code = request.query_params.get('code')
-        error = request.query_params.get('error', '')
-
-        try:
-            attempt = MyIDVerificationAttempt.objects.select_related('user__profile').get(state=state)
-        except MyIDVerificationAttempt.DoesNotExist:
-            return Response({'detail': 'Unknown MyID state.'}, status=status.HTTP_400_BAD_REQUEST)
-
-        if error or not code:
-            attempt.mark_failed(error or 'Missing OAuth code.')
-            return Response({'detail': 'MyID verification failed.'}, status=status.HTTP_400_BAD_REQUEST)
-
-        # In production this code is exchanged against MyID token/userinfo APIs.
-        # We store only a hash of the external identifier as required by the spec.
-        external_id = request.query_params.get('external_id') or f'myid:{code}'
-        profile, _ = Profile.objects.get_or_create(user=attempt.user)
-        profile.mark_myid_verified(external_id)
-        attempt.mark_success()
-
-        try:
-            from apps.notifications.models import AuditLog
-            AuditLog.objects.create(
-                user=attempt.user,
-                action='myid.verification.success',
-                metadata={'state': state},
-            )
-        except Exception:
-            logger.exception('Failed to write MyID audit log for user %s', attempt.user_id)
-
-        return Response({'detail': 'MyID verification completed.'})
-
-
 class VerificationStatusView(APIView):
     permission_classes = [IsAuthenticated]
 
@@ -237,14 +177,15 @@ class PhoneChangeSendView(APIView):
         serializer.is_valid(raise_exception=True)
         new_phone = serializer.validated_data['new_phone']
 
+        cooldown = settings.OTP_RESEND_COOLDOWN_SECONDS
         recent = PhoneChangeRequest.objects.filter(
             user=request.user,
             new_phone=new_phone,
-            created_at__gte=timezone.now() - timedelta(seconds=60),
+            created_at__gte=timezone.now() - timedelta(seconds=cooldown),
             is_used=False,
         ).exists()
         if recent:
-            return Response({'detail': 'Подождите 60 секунд перед повторной отправкой.'}, status=status.HTTP_429_TOO_MANY_REQUESTS)
+            return Response({'detail': f'Подождите {cooldown} секунд перед повторной отправкой.'}, status=status.HTTP_429_TOO_MANY_REQUESTS)
 
         code = generate_otp()
         PhoneChangeRequest.objects.create(user=request.user, new_phone=new_phone, code=code)

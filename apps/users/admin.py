@@ -1,6 +1,9 @@
 from django.contrib import admin
 from django.contrib.auth.admin import UserAdmin
-from .models import CustomUser, Profile, OTPCode, KYCDocument, MyIDVerificationAttempt, PhoneChangeRequest
+from .models import (
+    CustomUser, Profile, OTPCode, KYCDocument,
+    PassportDocument, FaceVerification, PhoneChangeRequest,
+)
 
 
 @admin.register(CustomUser)
@@ -25,10 +28,10 @@ class CustomUserAdmin(UserAdmin):
 
 @admin.register(Profile)
 class ProfileAdmin(admin.ModelAdmin):
-    list_display = ['user', 'full_name', 'rating', 'verification_status', 'is_verified_myid', 'myid_verified_at']
-    list_filter = ['verification_status', 'is_verified_myid']
+    list_display = ['user', 'full_name', 'rating', 'verification_status', 'is_verified_kyc', 'kyc_verified_at']
+    list_filter = ['verification_status', 'is_verified_kyc']
     search_fields = ['user__phone', 'full_name']
-    readonly_fields = ['myid_external_id_hash', 'myid_verified_at']
+    readonly_fields = ['kyc_verified_at']
 
 
 @admin.register(OTPCode)
@@ -62,12 +65,34 @@ class KYCDocumentAdmin(admin.ModelAdmin):
     reject.short_description = 'Отклонить выбранные KYC'
 
 
-@admin.register(MyIDVerificationAttempt)
-class MyIDVerificationAttemptAdmin(admin.ModelAdmin):
-    list_display = ['user', 'state', 'status', 'created_at', 'finished_at']
+@admin.register(PassportDocument)
+class PassportDocumentAdmin(admin.ModelAdmin):
+    list_display = ['user', 'document_type', 'series', 'number', 'status', 'submitted_at', 'verified_at']
+    list_filter = ['status', 'document_type']
+    search_fields = ['user__phone', 'series', 'number', 'pinfl', 'full_name']
+    readonly_fields = ['face_encoding', 'raw_ocr_text', 'submitted_at', 'verified_at']
+    actions = ['approve', 'reject']
+
+    def approve(self, request, queryset):
+        for doc in queryset:
+            doc.mark_verified()
+    approve.short_description = 'Подтвердить выбранные документы'
+
+    def reject(self, request, queryset):
+        for doc in queryset:
+            doc.mark_rejected('Отклонено администратором')
+    reject.short_description = 'Отклонить выбранные документы'
+
+
+@admin.register(FaceVerification)
+class FaceVerificationAdmin(admin.ModelAdmin):
+    list_display = ['user', 'status', 'face_match_score', 'liveness_score', 'submitted_at', 'verified_at']
     list_filter = ['status']
-    search_fields = ['user__phone', 'state']
-    readonly_fields = ['state', 'status', 'error', 'created_at', 'finished_at']
+    search_fields = ['user__phone']
+    readonly_fields = [
+        'face_match_score', 'face_match_passed', 'liveness_score', 'liveness_passed',
+        'submitted_at', 'verified_at',
+    ]
 
 
 @admin.register(PhoneChangeRequest)

@@ -1,5 +1,6 @@
 import logging
 
+from django.conf import settings
 from django.db import transaction
 from django.utils import timezone
 from rest_framework import generics, permissions, status
@@ -24,9 +25,9 @@ from apps.catalog.models import ItemAvailability
 logger = logging.getLogger('apps.bookings')
 
 
-def user_is_myid_verified(user) -> bool:
+def user_is_kyc_verified(user) -> bool:
     try:
-        return bool(user.profile.is_verified_myid)
+        return bool(user.profile.is_verified_kyc)
     except Exception:
         return False
 
@@ -35,7 +36,7 @@ def verification_required_response():
     return Response(
         {
             'code': 'VERIFICATION_REQUIRED',
-            'detail': 'Перед созданием сделки нужно пройти MyID verification.',
+            'detail': 'Перед созданием сделки нужно пройти проверку личности (KYC).',
         },
         status=status.HTTP_403_FORBIDDEN,
     )
@@ -58,7 +59,7 @@ class DealCreateView(generics.ListCreateAPIView):
         return Booking.objects.filter(renter=self.request.user).select_related('item', 'renter')
 
     def create(self, request, *args, **kwargs):
-        if not user_is_myid_verified(request.user):
+        if not user_is_kyc_verified(request.user):
             return verification_required_response()
         serializer = self.get_serializer(data=request.data, context={'request': request})
         serializer.is_valid(raise_exception=True)
@@ -76,7 +77,7 @@ class BookingCreateView(generics.CreateAPIView):
     serializer_class = BookingCreateSerializer
 
     def create(self, request, *args, **kwargs):
-        if not user_is_myid_verified(request.user):
+        if not user_is_kyc_verified(request.user):
             return verification_required_response()
 
         serializer = self.get_serializer(
@@ -151,7 +152,7 @@ class DealPayView(APIView):
     throttle_scope = 'payments'
 
     def post(self, request, pk):
-        if not user_is_myid_verified(request.user):
+        if not user_is_kyc_verified(request.user):
             return verification_required_response()
 
         serializer = DealPaySerializer(data=request.data)
@@ -178,18 +179,19 @@ class DealPayView(APIView):
 
             from apps.payments.models import Payment
 
+            scheme = settings.APP_DEEPLINK_SCHEME
             payment = Payment.objects.create(
                 booking=deal,
                 provider=provider,
                 amount=deal.total_price * 100,
                 status=Payment.STATUS_PENDING,
-                payment_url=f'rentoo://pay/{provider}?deal_id={deal.pk}',
+                payment_url=f'{scheme}://pay/{provider}?deal_id={deal.pk}',
             )
-            payment.payment_url = f'rentoo://pay/{provider}?deal_id={deal.pk}&payment_id={payment.pk}'
+            payment.payment_url = f'{scheme}://pay/{provider}?deal_id={deal.pk}&payment_id={payment.pk}'
             payment.save(update_fields=['payment_url'])
 
-        from apps.users.tasks import charge_myid_first_deal_cost
-        charge_myid_first_deal_cost.delay(request.user.pk, deal.pk)
+        from apps.users.tasks import charge_kyc_first_deal_cost
+        charge_kyc_first_deal_cost.delay(request.user.pk, deal.pk)
 
         return Response({
             'deal_id': deal.pk,

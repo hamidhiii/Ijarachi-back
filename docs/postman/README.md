@@ -9,7 +9,13 @@ Use the `Rentoo Local` environment. Start with `Auth / SMS Send`, then put the O
 
 For local dev with empty Eskiz credentials, the backend logs the OTP instead of sending SMS.
 
-MyID callback is a dev-friendly simulation: call `MyID Callback` with `state` from `MyID Start` and any `code`. Production MyID token exchange still needs real partner credentials.
+KYC is a self-hosted two-step pipeline (no third-party MyID dependency):
+
+1. `KYC (passport + face) / 1. Passport Upload` — upload a photo of the ID card/passport (`front_image`, optional `back_image`). The backend OCRs the document and extracts a face embedding, returns the recognized fields.
+2. `KYC (passport + face) / 2. Passport Confirm` — client reviews/corrects the OCR'd fields (`series`, `number`, `pinfl`, `full_name`, `birth_date`, ...) and confirms them; the document is marked verified.
+3. `KYC (passport + face) / 3. Face Verify` — upload 1-3 selfie frames (`frame_1..3`, from camera or file). The backend matches the face against the document and checks liveness across frames; on success the profile is marked KYC-verified automatically.
+
+`GET` variants of the passport/face endpoints return the current status of each step. `GET /api/v1/users/me/verification/` returns the overall profile verification status.
 
 Mobile-facing additions are included in the collection:
 

@@ -11,13 +11,14 @@ Backend часть для платформы шеринга (P2P аренды в
 - **Фоновые задачи**: Celery + Celery Beat
 - **Авторизация**: JWT (SimpleJWT)
 - **Контейнеризация**: Docker & Docker Compose
-- **Провайдеры SMS/оплат/KYC**: Eskiz.uz, Payme, Click, MyID
+- **Провайдеры SMS/оплат**: Eskiz.uz, Payme, Click
+- **KYC**: собственный пайплайн (OCR паспорта/ID-карты + сверка лица с liveness), без сторонних сервисов
 
 ---
 
 ## 🏗 Архитектура модулей (Apps)
 
-1. **`users`** — Пользователи, авторизация по телефону (OTP), профиль, MyID verification, смена телефона через SMS.
+1. **`users`** — Пользователи, авторизация по телефону (OTP), профиль, собственный KYC (паспорт/ID + сверка лица), смена телефона через SMS.
 2. **`catalog`** — Категории и объявления (`/listings`) с модерацией, фото, геолокацией, поиском и статистикой владельца.
 3. **`bookings`** — Сделки (`/deals`) со статусной машиной draft -> pending_payment -> paid -> in_progress -> returned -> completed/cancelled/disputed и защитой от двойного бронирования.
 4. **`payments`** — Интеграция с Payme (JSON-RPC) и Click (SHOP API). Логика временного удержания денег на счету компании до момента завершения сделки и возвращения залога (Escrow).
@@ -104,7 +105,7 @@ docker compose up -d --build
 
 Все роуты API автоматически документируются с помощью `drf-spectacular`. После запуска проекта документация доступна по ссылкам:
 
-- **Swagger UI**: [http://localhost:8000/api/schema/swagger-ui/](http://localhost:8000/api/schema/swagger-ui/)
+- **Swagger UI**: [http://localhost:8000/api/docs/](http://localhost:8000/api/docs/)
 - **ReDoc**: [http://localhost:8000/api/schema/redoc/](http://localhost:8000/api/schema/redoc/)
 
 Там описаны все DTO (Serializers), параметры фильтрации объявлений и способы взаимодействия с Webhook-ами оплат.

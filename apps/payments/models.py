@@ -54,14 +54,14 @@ class Transaction(models.Model):
     TYPE_REFUND = 'refund'
     TYPE_PAYOUT = 'payout'
     TYPE_COMMISSION = 'commission'
-    TYPE_MYID_EXPENSE = 'myid_expense'
+    TYPE_KYC_EXPENSE = 'kyc_expense'
 
     TYPE_CHOICES = [
         (TYPE_ESCROW_HOLD, 'Escrow hold'),
         (TYPE_REFUND, 'Refund'),
         (TYPE_PAYOUT, 'Payout'),
         (TYPE_COMMISSION, 'Commission'),
-        (TYPE_MYID_EXPENSE, 'MyID expense'),
+        (TYPE_KYC_EXPENSE, 'KYC expense'),
     ]
 
     booking = models.ForeignKey('bookings.Booking', on_delete=models.SET_NULL, null=True, blank=True, related_name='transactions')

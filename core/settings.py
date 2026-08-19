@@ -117,7 +117,7 @@ REST_FRAMEWORK = {
         'auth': '10/min',
         'sms': '3/min',
         'payments': '20/min',
-        'myid': '10/min',
+        'kyc': '10/min',
     },
 }
 
@@ -215,18 +215,19 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
 ESKIZ_EMAIL = config('ESKIZ_EMAIL', default='')
 ESKIZ_PASSWORD = config('ESKIZ_PASSWORD', default='')
+ESKIZ_BASE_URL = config('ESKIZ_BASE_URL', default='https://notify.eskiz.uz/api')
+ESKIZ_SENDER_ID = config('ESKIZ_SENDER_ID', default='4546')
+SMS_REQUEST_TIMEOUT_SECONDS = config('SMS_REQUEST_TIMEOUT_SECONDS', default=10, cast=int)
 
-# MyID OAuth
-MYID_CLIENT_ID = config('MYID_CLIENT_ID', default='')
-MYID_CLIENT_SECRET = config('MYID_CLIENT_SECRET', default='')
-MYID_REDIRECT_URI = config('MYID_REDIRECT_URI', default='http://localhost:8000/api/v1/myid/callback/')
-MYID_AUTHORIZE_URL = config('MYID_AUTHORIZE_URL', default='https://myid.uz/oauth/authorize')
-MYID_TOKEN_URL = config('MYID_TOKEN_URL', default='https://myid.uz/oauth/token')
-MYID_USERINFO_URL = config('MYID_USERINFO_URL', default='https://myid.uz/api/userinfo')
-MYID_FIRST_DEAL_COST = config('MYID_FIRST_DEAL_COST', default=8000, cast=int)
+# Собственный KYC (паспорт/ID-карта + сверка лица), заменяет стороннюю MyID-интеграцию
+KYC_FIRST_DEAL_COST = config('KYC_FIRST_DEAL_COST', default=8000, cast=int)
+# face_recognition distance threshold: чем меньше — тем строже сверка лица с документом (0..1)
+KYC_FACE_MATCH_DISTANCE = config('KYC_FACE_MATCH_DISTANCE', default=0.5, cast=float)
+# Минимальный перепад Eye Aspect Ratio между кадрами, чтобы засчитать моргание
+KYC_LIVENESS_EAR_DELTA = config('KYC_LIVENESS_EAR_DELTA', default=0.05, cast=float)
+# Минимальное относительное смещение центра лица между кадрами (к ширине лица), чтобы засчитать поворот головы
+KYC_LIVENESS_MOVEMENT_RATIO = config('KYC_LIVENESS_MOVEMENT_RATIO', default=0.08, cast=float)
 
-# Push notifications
-FCM_SERVER_KEY = config('FCM_SERVER_KEY', default='')
 
 # ─── Payment Providers ────────────────────────────────────────────────────────
 
@@ -241,7 +242,11 @@ CLICK_SECRET_KEY = config('CLICK_SECRET_KEY', default='')
 PLATFORM_COMMISSION_PERCENT = config('PLATFORM_COMMISSION_PERCENT', default=10, cast=int)
 
 # OTP settings
-OTP_EXPIRY_SECONDS = 120  # 2 minutes
+OTP_EXPIRY_SECONDS = config('OTP_EXPIRY_SECONDS', default=120, cast=int)
+OTP_RESEND_COOLDOWN_SECONDS = config('OTP_RESEND_COOLDOWN_SECONDS', default=60, cast=int)
+
+# Mobile app deep-link scheme (rentoo://...)
+APP_DEEPLINK_SCHEME = config('APP_DEEPLINK_SCHEME', default='rentoo')
 
 # ─── Swagger/Redoc ────────────────────────────────────────────────────────────
 
