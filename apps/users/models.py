@@ -266,3 +266,24 @@ class PhoneChangeRequest(models.Model):
 
     class Meta:
         ordering = ['-created_at']
+
+
+class TelegramLink(models.Model):
+    """
+    Связка номера телефона с чатом Telegram-бота: пользователь подтверждает номер,
+    поделившись контактом с ботом, после чего OTP-коды на этот номер шлём в Telegram
+    вместо SMS (временное решение вместо Eskiz.uz).
+    """
+    phone = models.CharField('Телефон', max_length=20, unique=True)
+    chat_id = models.BigIntegerField('Telegram chat_id')
+    telegram_user_id = models.BigIntegerField('Telegram user_id', null=True, blank=True)
+    username = models.CharField('Telegram username', max_length=64, blank=True)
+    linked_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = 'Привязка Telegram'
+        verbose_name_plural = 'Привязки Telegram'
+
+    def __str__(self):
+        return f'{self.phone} -> chat {self.chat_id}'

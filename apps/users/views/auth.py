@@ -18,7 +18,7 @@ from ..serializers import (
     PhoneChangeSendSerializer,
     PhoneChangeVerifySerializer,
 )
-from ..sms import send_otp_sms, generate_otp
+from ..otp import generate_otp, send_otp, telegram_deep_link, telegram_link_required
 
 logger = logging.getLogger(__name__)
 
@@ -36,6 +36,14 @@ class SendOTPView(APIView):
         serializer.is_valid(raise_exception=True)
         phone = serializer.validated_data['phone']
 
+        if telegram_link_required(phone):
+            return Response({
+                'detail': 'Подтвердите номер в Telegram-боте, чтобы получить код.',
+                'telegram_required': True,
+                'telegram_deep_link': telegram_deep_link(phone),
+                'phone': phone,
+            })
+
         # Rate-limit: не чаще раза в OTP_RESEND_COOLDOWN_SECONDS
         cooldown = settings.OTP_RESEND_COOLDOWN_SECONDS
         recent = OTPCode.objects.filter(
@@ -52,10 +60,10 @@ class SendOTPView(APIView):
         code = generate_otp()
         OTPCode.objects.create(phone=phone, code=code)
 
-        sent = send_otp_sms(phone, code)
+        sent = send_otp(phone, code)
         if not sent:
             return Response(
-                {'detail': 'Не удалось отправить SMS. Попробуйте позже.'},
+                {'detail': 'Не удалось отправить код. Попробуйте позже.'},
                 status=status.HTTP_503_SERVICE_UNAVAILABLE,
             )
 
@@ -177,6 +185,14 @@ class PhoneChangeSendView(APIView):
         serializer.is_valid(raise_exception=True)
         new_phone = serializer.validated_data['new_phone']
 
+        if telegram_link_required(new_phone):
+            return Response({
+                'detail': 'Подтвердите новый номер в Telegram-боте, чтобы получить код.',
+                'telegram_required': True,
+                'telegram_deep_link': telegram_deep_link(new_phone),
+                'new_phone': new_phone,
+            })
+
         cooldown = settings.OTP_RESEND_COOLDOWN_SECONDS
         recent = PhoneChangeRequest.objects.filter(
             user=request.user,
@@ -189,8 +205,8 @@ class PhoneChangeSendView(APIView):
 
         code = generate_otp()
         PhoneChangeRequest.objects.create(user=request.user, new_phone=new_phone, code=code)
-        if not send_otp_sms(new_phone, code):
-            return Response({'detail': 'Не удалось отправить SMS.'}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+        if not send_otp(new_phone, code):
+            return Response({'detail': 'Не удалось отправить код.'}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
         return Response({'detail': 'Код отправлен.', 'new_phone': new_phone})
 
 

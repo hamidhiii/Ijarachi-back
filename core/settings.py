@@ -245,6 +245,16 @@ PLATFORM_COMMISSION_PERCENT = config('PLATFORM_COMMISSION_PERCENT', default=10, 
 OTP_EXPIRY_SECONDS = config('OTP_EXPIRY_SECONDS', default=120, cast=int)
 OTP_RESEND_COOLDOWN_SECONDS = config('OTP_RESEND_COOLDOWN_SECONDS', default=60, cast=int)
 
+# ─── Telegram OTP-бот (временная замена SMS) ──────────────────────────────────
+
+TELEGRAM_BOT_TOKEN = config('TELEGRAM_BOT_TOKEN', default='')
+TELEGRAM_BOT_USERNAME = config('TELEGRAM_BOT_USERNAME', default='')
+TELEGRAM_API_BASE_URL = config('TELEGRAM_API_BASE_URL', default='https://api.telegram.org')
+# Секрет в пути вебхука (/api/v1/telegram/webhook/<secret>/), защищает от посторонних запросов
+TELEGRAM_WEBHOOK_SECRET = config('TELEGRAM_WEBHOOK_SECRET', default='')
+# Если код не удалось отправить в Telegram (или номер ещё не привязан к боту) — падать в SMS
+OTP_SMS_FALLBACK_ENABLED = config('OTP_SMS_FALLBACK_ENABLED', default=False, cast=bool)
+
 # Mobile app deep-link scheme (rentoo://...)
 APP_DEEPLINK_SCHEME = config('APP_DEEPLINK_SCHEME', default='rentoo')
 

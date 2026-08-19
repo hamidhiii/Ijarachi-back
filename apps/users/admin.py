@@ -2,7 +2,7 @@ from django.contrib import admin
 from django.contrib.auth.admin import UserAdmin
 from .models import (
     CustomUser, Profile, OTPCode, KYCDocument,
-    PassportDocument, FaceVerification, PhoneChangeRequest,
+    PassportDocument, FaceVerification, PhoneChangeRequest, TelegramLink,
 )
 
 
@@ -100,3 +100,9 @@ class PhoneChangeRequestAdmin(admin.ModelAdmin):
     list_display = ['user', 'new_phone', 'created_at', 'is_used']
     list_filter = ['is_used']
     search_fields = ['user__phone', 'new_phone']
+
+
+@admin.register(TelegramLink)
+class TelegramLinkAdmin(admin.ModelAdmin):
+    list_display = ['phone', 'chat_id', 'username', 'linked_at', 'updated_at']
+    search_fields = ['phone', 'username']

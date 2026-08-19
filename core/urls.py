@@ -14,6 +14,7 @@ urlpatterns = [
 
     # API v1
     path('api/v1/auth/', include('apps.users.urls.auth')),
+    path('api/v1/telegram/', include('apps.users.urls.telegram')),
     path('api/v1/', include('apps.users.urls.profile')),
     path('api/v1/', include('apps.catalog.urls')),
     path('api/v1/', include('apps.bookings.urls')),
