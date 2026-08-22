@@ -32,6 +32,11 @@ staticfiles/
 venv/
 ENV/
 env/
+.venv/
+
+# secrets / local backups
+.env.save
+backups/
 
 # IDEs
 .idea/
