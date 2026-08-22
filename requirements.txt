@@ -20,6 +20,7 @@ gunicorn==22.0.0
 django-celery-beat==2.9.0
 channels==4.1.0
 channels-redis==4.2.0
+uvicorn[standard]==0.30.6
 
 # Self-hosted KYC (passport OCR + face match/liveness)
 numpy==1.26.4
