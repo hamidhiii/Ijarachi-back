@@ -139,8 +139,15 @@ SIMPLE_JWT = {
 
 CORS_ALLOWED_ORIGINS = config(
     'CORS_ALLOWED_ORIGINS',
-    default='http://localhost:3000,http://localhost:5173'
+    default='http://localhost:3000,http://localhost:5173,https://ijarachi-front.vercel.app'
 ).split(',')
+# Vercel preview deployments (per-branch and per-commit URLs) — matches e.g.
+# https://ijarachi-front-git-feature-x-user.vercel.app and
+# https://ijarachi-front-<hash>-user.vercel.app without listing each one.
+CORS_ALLOWED_ORIGIN_REGEXES = [
+    pattern for pattern in config('CORS_ALLOWED_ORIGIN_REGEXES', default=r'^https://ijarachi-front(-[a-zA-Z0-9-]+)?\.vercel\.app$').split(',')
+    if pattern
+]
 CORS_ALLOW_CREDENTIALS = True
 
 if DEBUG:
