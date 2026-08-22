@@ -120,6 +120,11 @@ REST_FRAMEWORK = {
         'payments': '20/min',
         'kyc': '10/min',
     },
+    # Exactly one reverse proxy (nginx) sits in front of Django here. Without
+    # this, SimpleRateThrottle.get_ident() falls back to hashing the raw
+    # X-Forwarded-For string, which a client can pad with fake leading hops to
+    # get a fresh throttle identity on every request.
+    'NUM_PROXIES': 1,
 }
 
 SIMPLE_JWT = {
