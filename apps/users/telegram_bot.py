@@ -23,6 +23,14 @@ def _api_url(method: str) -> str:
     return f'{settings.TELEGRAM_API_BASE_URL}/bot{settings.TELEGRAM_BOT_TOKEN}/{method}'
 
 
+def _redact_token(text: str) -> str:
+    """Strips the bot token out of error messages before they hit logs (requests'
+    HTTPError embeds the full request URL, which contains the token for the
+    Telegram Bot API)."""
+    token = settings.TELEGRAM_BOT_TOKEN
+    return text.replace(token, '***') if token else text
+
+
 def send_telegram_message(chat_id: int, text: str, reply_markup: dict | None = None) -> bool:
     """Send a text message via the Telegram Bot API. Returns True on success."""
     if not settings.TELEGRAM_BOT_TOKEN:
@@ -36,7 +44,7 @@ def send_telegram_message(chat_id: int, text: str, reply_markup: dict | None = N
         resp.raise_for_status()
         return True
     except Exception as exc:
-        logger.error('Telegram sendMessage failed for chat %s: %s', chat_id, exc)
+        logger.error('Telegram sendMessage failed for chat %s: %s', chat_id, _redact_token(str(exc)))
         return False
 
 

@@ -16,6 +16,12 @@ class Command(BaseCommand):
         )
         parser.add_argument('--delete', action='store_true', help='Remove the webhook instead of setting it')
 
+    def _redact(self, text: str) -> str:
+        # requests' HTTPError embeds the full request URL, which contains the bot
+        # token for the Telegram Bot API — strip it before it hits stdout/logs.
+        token = settings.TELEGRAM_BOT_TOKEN
+        return text.replace(token, '***') if token else text
+
     def handle(self, *args, **options):
         if not settings.TELEGRAM_BOT_TOKEN:
             raise CommandError('TELEGRAM_BOT_TOKEN is not set')
@@ -23,8 +29,11 @@ class Command(BaseCommand):
         api = f'{settings.TELEGRAM_API_BASE_URL}/bot{settings.TELEGRAM_BOT_TOKEN}'
 
         if options['delete']:
-            resp = requests.post(f'{api}/deleteWebhook', timeout=10)
-            resp.raise_for_status()
+            try:
+                resp = requests.post(f'{api}/deleteWebhook', timeout=10)
+                resp.raise_for_status()
+            except Exception as exc:
+                raise CommandError(self._redact(str(exc)))
             self.stdout.write(self.style.SUCCESS(f'Webhook removed: {resp.json()}'))
             return
 
@@ -35,9 +44,12 @@ class Command(BaseCommand):
             raise CommandError('TELEGRAM_WEBHOOK_SECRET is not set')
 
         url = f'{base_url.rstrip("/")}/api/v1/telegram/webhook/{settings.TELEGRAM_WEBHOOK_SECRET}/'
-        resp = requests.post(f'{api}/setWebhook', data={
-            'url': url,
-            'allowed_updates': '["message"]',
-        }, timeout=10)
-        resp.raise_for_status()
+        try:
+            resp = requests.post(f'{api}/setWebhook', data={
+                'url': url,
+                'allowed_updates': '["message"]',
+            }, timeout=10)
+            resp.raise_for_status()
+        except Exception as exc:
+            raise CommandError(self._redact(str(exc)))
         self.stdout.write(self.style.SUCCESS(f'Webhook set to {url}: {resp.json()}'))
