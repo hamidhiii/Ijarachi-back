@@ -116,7 +116,7 @@ REST_FRAMEWORK = {
     ),
     'DEFAULT_THROTTLE_RATES': {
         'auth': '10/min',
-        'sms': '3/min',
+        'sms': '5/min',
         'payments': '20/min',
         'kyc': '10/min',
     },
