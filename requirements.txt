@@ -29,3 +29,4 @@ pytesseract==0.3.13
 dlib==19.24.6
 face_recognition==1.3.0
 face_recognition_models==0.3.0
+whitenoise
