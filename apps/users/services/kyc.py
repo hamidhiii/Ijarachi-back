@@ -31,6 +31,43 @@ class KYCProcessingError(Exception):
     """Не удалось обработать документ/селфи (нечитаемое фото, лицо не найдено и т.п.)."""
 
 
+def get_verification_status(user) -> dict:
+    """
+    Сводный статус верификации личности для GET /users/me/verification/:
+    {status: none|review|approved|rejected, rejection_reason, reviewed_at}
+    Собирается из PassportDocument + FaceVerification (собственный KYC-пайплайн),
+    с фолбэком на устаревший ручной KYCDocument, если новый флоу не пройден.
+    """
+    from ..models import PassportDocument, FaceVerification, KYCDocument
+
+    face = FaceVerification.objects.filter(user=user).first()
+    if face and face.status == FaceVerification.STATUS_PASSED:
+        return {'status': 'approved', 'rejection_reason': None, 'reviewed_at': face.verified_at}
+    if face and face.status == FaceVerification.STATUS_FAILED:
+        return {'status': 'rejected', 'rejection_reason': face.fail_reason or None, 'reviewed_at': face.submitted_at}
+
+    passport = PassportDocument.objects.filter(user=user).first()
+    if passport and passport.status == PassportDocument.STATUS_REJECTED:
+        return {'status': 'rejected', 'rejection_reason': passport.reject_reason or None, 'reviewed_at': None}
+    if passport:
+        return {'status': 'review', 'rejection_reason': None, 'reviewed_at': None}
+
+    kyc_doc = KYCDocument.objects.filter(user=user).first()
+    if kyc_doc:
+        legacy_map = {
+            KYCDocument.STATUS_APPROVED: 'approved',
+            KYCDocument.STATUS_REJECTED: 'rejected',
+            KYCDocument.STATUS_PENDING: 'review',
+        }
+        return {
+            'status': legacy_map.get(kyc_doc.status, 'review'),
+            'rejection_reason': kyc_doc.reject_reason or None,
+            'reviewed_at': kyc_doc.reviewed_at,
+        }
+
+    return {'status': 'none', 'rejection_reason': None, 'reviewed_at': None}
+
+
 def _read_rgb(django_file) -> np.ndarray:
     """Читает Django UploadedFile/ImageFieldFile в RGB numpy-массив."""
     django_file.seek(0)

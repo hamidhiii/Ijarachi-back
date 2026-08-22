@@ -44,13 +44,19 @@ class ChatConsumer(AsyncJsonWebsocketConsumer):
         from .models import Conversation, Message
 
         conversation = Conversation.objects.get(pk=self.conversation_id)
-        message = Message.objects.create(conversation=conversation, sender=self.scope['user'], text=text)
+        user = self.scope['user']
+        message = Message.objects.create(conversation=conversation, sender=user, text=text)
         conversation.save(update_fields=['updated_at'])
+        try:
+            full_name = user.profile.full_name or user.phone
+        except Exception:
+            full_name = user.phone
         return {
             'id': message.pk,
             'conversation': conversation.pk,
-            'sender': self.scope['user'].pk,
-            'sender_phone': self.scope['user'].phone,
+            'sender': {'id': user.pk, 'full_name': full_name},
+            'sender_phone': user.phone,
             'text': message.text,
+            'is_read': False,
             'created_at': message.created_at.isoformat(),
         }

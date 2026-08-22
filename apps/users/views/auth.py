@@ -172,8 +172,11 @@ class VerificationStatusView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        profile, _ = Profile.objects.get_or_create(user=request.user)
-        return Response(VerificationStatusSerializer(profile).data)
+        from ..services.kyc import get_verification_status
+
+        data = get_verification_status(request.user)
+        data['phone'] = request.user.phone
+        return Response(VerificationStatusSerializer(data).data)
 
 
 class PhoneChangeSendView(APIView):

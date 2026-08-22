@@ -47,14 +47,19 @@ class TokenPairSerializer(serializers.Serializer):
 # ─── Profile ──────────────────────────────────────────────────────────────────
 
 class ProfileSerializer(serializers.ModelSerializer):
+    id = serializers.IntegerField(source='user.id', read_only=True)
     phone = serializers.CharField(source='user.phone', read_only=True)
     email = serializers.EmailField(source='user.email', required=False)
+    verified = serializers.BooleanField(source='is_verified_kyc', read_only=True)
+    role = serializers.SerializerMethodField()
 
     class Meta:
         model = Profile
         fields = [
-            'phone', 'email', 'full_name', 'avatar',
-            'rating', 'rating_count', 'verification_status', 'wallet_balance',
+            'id', 'phone', 'email', 'full_name', 'avatar',
+            'rating', 'verified', 'role',
+            # Доп. поля для обратной совместимости с мобильным клиентом.
+            'rating_count', 'verification_status', 'wallet_balance',
             'is_verified_kyc', 'kyc_verified_at',
         ]
         read_only_fields = [
@@ -65,6 +70,9 @@ class ProfileSerializer(serializers.ModelSerializer):
             'is_verified_kyc',
             'kyc_verified_at',
         ]
+
+    def get_role(self, obj):
+        return 'admin' if obj.user.is_staff else 'user'
 
     def update(self, instance, validated_data):
         user_data = validated_data.pop('user', {})
@@ -79,6 +87,8 @@ class PublicUserSerializer(serializers.ModelSerializer):
     avatar = serializers.SerializerMethodField()
     rating = serializers.SerializerMethodField()
     rating_count = serializers.SerializerMethodField()
+    verified = serializers.SerializerMethodField()
+    role = serializers.SerializerMethodField()
     is_verified_kyc = serializers.SerializerMethodField()
     verification_status = serializers.SerializerMethodField()
 
@@ -89,6 +99,9 @@ class PublicUserSerializer(serializers.ModelSerializer):
             'full_name',
             'avatar',
             'rating',
+            'verified',
+            'role',
+            # Доп. поля для обратной совместимости с мобильным клиентом.
             'rating_count',
             'is_verified_kyc',
             'verification_status',
@@ -130,6 +143,11 @@ class PublicUserSerializer(serializers.ModelSerializer):
         except Exception:
             return False
 
+    get_verified = get_is_verified_kyc
+
+    def get_role(self, obj):
+        return 'admin' if obj.is_staff else 'user'
+
     def get_verification_status(self, obj):
         try:
             return obj.profile.verification_status
@@ -164,18 +182,16 @@ class KYCStatusSerializer(serializers.ModelSerializer):
         read_only_fields = fields
 
 
-class VerificationStatusSerializer(serializers.ModelSerializer):
-    phone = serializers.CharField(source='user.phone', read_only=True)
-
-    class Meta:
-        model = Profile
-        fields = [
-            'phone',
-            'verification_status',
-            'is_verified_kyc',
-            'kyc_verified_at',
-        ]
-        read_only_fields = fields
+class VerificationStatusSerializer(serializers.Serializer):
+    """
+    GET /users/me/verification/ — сводный статус KYC (паспорт + сверка лица).
+    Собирается сервисом `apps.users.services.kyc.get_verification_status`, а не
+    напрямую из модели, т.к. объединяет несколько таблиц (Passport/FaceVerification).
+    """
+    phone = serializers.CharField()
+    status = serializers.ChoiceField(choices=['none', 'review', 'approved', 'rejected'])
+    rejection_reason = serializers.CharField(allow_null=True)
+    reviewed_at = serializers.DateTimeField(allow_null=True)
 
 
 # ─── KYC: паспорт/ID-карта ─────────────────────────────────────────────────────

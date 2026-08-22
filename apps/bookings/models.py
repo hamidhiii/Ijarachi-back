@@ -30,6 +30,31 @@ class Booking(models.Model):
         (STATUS_DISPUTED, 'Disputed'),
     ]
 
+    # Публичный словарь статусов, который ожидает фронтенд:
+    # pending, confirmed, active, returned, completed, disputed (+ cancelled).
+    PUBLIC_STATUS_MAP = {
+        STATUS_DRAFT: 'pending',
+        STATUS_PENDING_PAYMENT: 'pending',
+        STATUS_PAID: 'confirmed',
+        STATUS_IN_PROGRESS: 'active',
+        STATUS_RETURNED: 'returned',
+        STATUS_COMPLETED: 'completed',
+        STATUS_CANCELLED: 'cancelled',
+        STATUS_DISPUTED: 'disputed',
+    }
+    # Обратный маппинг для входящих PATCH /deals/:id/status/ с публичным именем статуса.
+    # Несколько внутренних статусов могут схлопываться в один публичный (pending) —
+    # для входящих запросов берём наиболее вероятный целевой внутренний статус.
+    PUBLIC_STATUS_INPUT_MAP = {
+        'pending': STATUS_PENDING_PAYMENT,
+        'confirmed': STATUS_PAID,
+        'active': STATUS_IN_PROGRESS,
+        'returned': STATUS_RETURNED,
+        'completed': STATUS_COMPLETED,
+        'cancelled': STATUS_CANCELLED,
+        'disputed': STATUS_DISPUTED,
+    }
+
     ESCROW_PENDING = 'pending'
     ESCROW_HELD = 'held'
     ESCROW_RELEASED = 'released'
@@ -126,6 +151,11 @@ class Booking(models.Model):
         """Returns human-readable progress label for 'renter' or 'owner'."""
         mapping = self.PROGRESS_RENTER if role == 'renter' else self.PROGRESS_OWNER
         return mapping.get(self.status, self.status)
+
+    @property
+    def public_status(self) -> str:
+        """Статус в словаре, который ожидает фронтенд (см. PUBLIC_STATUS_MAP)."""
+        return self.PUBLIC_STATUS_MAP.get(self.status, self.status)
 
 
 class BookingPhoto(models.Model):

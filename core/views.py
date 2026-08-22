@@ -1,46 +1,90 @@
 import csv
 
-from django.db.models import Count, Sum
+from django.db.models import Sum
 from django.http import HttpResponse
 from django.utils import timezone
+from datetime import timedelta
 from rest_framework.permissions import IsAdminUser
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+# Сколько последних записей отдавать в списках дашборда (не полная выгрузка).
+DASHBOARD_LIST_LIMIT = 50
+
 
 class AdminDashboardView(APIView):
+    """
+    GET /api/v1/admin-api/dashboard/
+    Формат ответа — карточки статистики + списки для админ-консоли фронта:
+    {stats:[{label,value,delta}], users:[...], deals:[...Deal], disputes:[...]}
+    """
     permission_classes = [IsAdminUser]
 
     def get(self, request):
         from apps.bookings.models import Booking
-        from apps.catalog.models import Item
+        from apps.bookings.serializers import BookingListSerializer
         from apps.payments.models import Payment
         from apps.users.models import CustomUser
 
+        now = timezone.now()
+        month_ago = now - timedelta(days=30)
+
         paid_payments = Payment.objects.filter(status__in=[Payment.STATUS_PAID, Payment.STATUS_COMPLETED])
         gmv = paid_payments.aggregate(total=Sum('amount'))['total'] or 0
+
+        total_users = CustomUser.objects.count()
+        new_users = CustomUser.objects.filter(date_joined__gte=month_ago).count()
         active_deals = Booking.objects.filter(
             status__in=[Booking.STATUS_PAID, Booking.STATUS_IN_PROGRESS, Booking.STATUS_RETURNED]
         ).count()
+        disputed_qs = Booking.objects.filter(status=Booking.STATUS_DISPUTED).select_related(
+            'item__owner', 'renter'
+        ).prefetch_related('item__images').order_by('-updated_at')
+
+        stats = [
+            {'label': 'Пользователи', 'value': str(total_users), 'delta': f'+{new_users} за 30 дней'},
+            {'label': 'Активные сделки', 'value': str(active_deals), 'delta': None},
+            {'label': 'Споры', 'value': str(disputed_qs.count()), 'delta': None},
+            {'label': 'GMV (сум)', 'value': str(gmv), 'delta': None},
+        ]
+
+        users = [
+            {
+                'id': user.id,
+                'name': getattr(getattr(user, 'profile', None), 'full_name', '') or user.phone,
+                'phone': user.phone,
+                'verified': bool(getattr(getattr(user, 'profile', None), 'is_verified_kyc', False)),
+                'status': 'active' if user.is_active else 'blocked',
+            }
+            for user in CustomUser.objects.select_related('profile').order_by('-date_joined')[:DASHBOARD_LIST_LIMIT]
+        ]
+
+        deals_qs = (
+            Booking.objects.select_related('item__owner', 'renter')
+            .prefetch_related('item__images')
+            .order_by('-created_at')[:DASHBOARD_LIST_LIMIT]
+        )
+        deals = BookingListSerializer(deals_qs, many=True, context={'request': request}).data
+
+        disputes = [
+            {
+                'id': booking.id,
+                'deal_id': booking.id,
+                'title': booking.item.title,
+                # Отдельной модели споров/статусов рассмотрения пока нет — все
+                # сделки в статусе disputed считаются открытыми на рассмотрении.
+                'status': 'review',
+                'amount': booking.total_price,
+                'created_at': booking.created_at,
+            }
+            for booking in disputed_qs[:DASHBOARD_LIST_LIMIT]
+        ]
 
         return Response({
-            'generated_at': timezone.now(),
-            'users': {
-                'total': CustomUser.objects.count(),
-                'verified_kyc': CustomUser.objects.filter(profile__is_verified_kyc=True).count(),
-            },
-            'listings': dict(
-                Item.objects.values('status').annotate(count=Count('id')).values_list('status', 'count')
-            ),
-            'deals': {
-                'active': active_deals,
-                'disputed': Booking.objects.filter(status=Booking.STATUS_DISPUTED).count(),
-                'completed': Booking.objects.filter(status=Booking.STATUS_COMPLETED).count(),
-            },
-            'finance': {
-                'gmv_tiyin': gmv,
-                'paid_payments': paid_payments.count(),
-            },
+            'stats': stats,
+            'users': users,
+            'deals': deals,
+            'disputes': disputes,
         })
 
 

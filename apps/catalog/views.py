@@ -3,7 +3,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework.parsers import MultiPartParser, FormParser
 from django.db import connection
-from django.db.models import F, Q
+from django.db.models import F, Q, Count
 from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework.filters import SearchFilter, OrderingFilter
 
@@ -17,7 +17,6 @@ from .serializers import (
     ItemImageSerializer,
     ItemImageUploadSerializer,
     FavoriteCreateSerializer,
-    FavoriteSerializer,
     ListingAvailabilitySerializer,
     ListingModerationSerializer,
 )
@@ -27,16 +26,16 @@ from .filters import ItemFilter
 class CategoryListView(generics.ListAPIView):
     """
     GET /api/v1/categories/
-    Возвращает дерево категорий (только корневые с детьми).
+    Плоский список категорий с количеством одобренных объявлений в каждой.
     """
     permission_classes = [permissions.AllowAny]
     serializer_class = CategorySerializer
     pagination_class = None
 
     def get_queryset(self):
-        return Category.objects.filter(
-            is_active=True, parent__isnull=True
-        ).prefetch_related('children')
+        return Category.objects.filter(is_active=True).annotate(
+            listings_count=Count('items', filter=Q(items__status=Item.STATUS_APPROVED))
+        )
 
 
 class ListingListCreateView(generics.ListCreateAPIView):
@@ -220,11 +219,19 @@ class ListingAvailabilityView(APIView):
         if not item:
             return Response({'detail': 'Объявление не найдено.'}, status=status.HTTP_404_NOT_FOUND)
         availability, _ = ItemAvailability.objects.get_or_create(item=item)
-        return Response({
-            'listing_id': item.pk,
-            'blocked_dates': availability.blocked_dates,
-            'blockedDates': availability.blocked_dates,
-        })
+        return Response({'blocked_dates': availability.blocked_dates})
+
+    def patch(self, request, pk):
+        item = self._get_item(request, pk, write=True)
+        if not item:
+            return Response({'detail': 'Объявление не найдено.'}, status=status.HTTP_404_NOT_FOUND)
+
+        serializer = ListingAvailabilitySerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        availability, _ = ItemAvailability.objects.get_or_create(item=item)
+        availability.blocked_dates = serializer.validated_data['blocked_dates']
+        availability.save(update_fields=['blocked_dates'])
+        return Response({'blocked_dates': availability.blocked_dates})
 
 
 class ListingReviewsView(generics.ListAPIView):
@@ -241,22 +248,6 @@ class ListingReviewsView(generics.ListAPIView):
             .filter(listing_id=self.kwargs['pk'], reviewee_id=F('listing__owner_id'))
             .select_related('booking', 'listing', 'reviewer__profile', 'reviewee__profile')
         )
-
-    def patch(self, request, pk):
-        item = self._get_item(request, pk, write=True)
-        if not item:
-            return Response({'detail': 'Объявление не найдено.'}, status=status.HTTP_404_NOT_FOUND)
-
-        serializer = ListingAvailabilitySerializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
-        availability, _ = ItemAvailability.objects.get_or_create(item=item)
-        availability.blocked_dates = serializer.validated_data['blocked_dates']
-        availability.save(update_fields=['blocked_dates'])
-        return Response({
-            'listing_id': item.pk,
-            'blocked_dates': availability.blocked_dates,
-            'blockedDates': availability.blocked_dates,
-        })
 
 
 class ListingModerationView(APIView):
@@ -277,11 +268,21 @@ class ListingModerationView(APIView):
 
 
 class FavoriteListCreateView(APIView):
+    """
+    GET /api/v1/favorites/ — отдаёт список Listing напрямую (как ожидает фронт),
+    без обёртки Favorite.
+    """
     permission_classes = [permissions.IsAuthenticated]
 
     def get(self, request):
-        qs = Favorite.objects.filter(user=request.user).select_related('item', 'item__category', 'item__owner__profile')
-        return Response(FavoriteSerializer(qs, many=True, context={'request': request}).data)
+        qs = (
+            Favorite.objects
+            .filter(user=request.user)
+            .select_related('item', 'item__category', 'item__owner__profile')
+            .prefetch_related('item__images')
+        )
+        items = [f.item for f in qs]
+        return Response(ItemListSerializer(items, many=True, context={'request': request}).data)
 
     def post(self, request):
         serializer = FavoriteCreateSerializer(data=request.data)
@@ -294,7 +295,7 @@ class FavoriteListCreateView(APIView):
             Item.objects.filter(pk=favorite.item_id).update(favorite_count=F('favorite_count') + 1)
             favorite.item.favorite_count += 1
         return Response(
-            FavoriteSerializer(favorite, context={'request': request}).data,
+            ItemListSerializer(favorite.item, context={'request': request}).data,
             status=status.HTTP_201_CREATED if created else status.HTTP_200_OK,
         )
 
@@ -337,7 +338,10 @@ class ItemImageUploadView(APIView):
         serializer = ItemImageUploadSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         image = serializer.save(item=item)
-        return Response(ItemImageSerializer(image).data, status=status.HTTP_201_CREATED)
+        return Response(
+            ItemImageSerializer(image, context={'request': request}).data,
+            status=status.HTTP_201_CREATED,
+        )
 
     def delete(self, request, item_id, image_id):
         item = self._get_item(item_id, request.user)

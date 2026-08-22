@@ -5,31 +5,38 @@ from .models import Category, Favorite, Item, ItemImage, ItemAvailability
 
 
 class CategorySerializer(serializers.ModelSerializer):
-    children = serializers.SerializerMethodField()
+    """
+    GET /categories/ — плоский список категорий с количеством объявлений.
+    listings_count аннотируется в CategoryListView.get_queryset().
+    """
+    listings_count = serializers.IntegerField(read_only=True, default=0)
 
     class Meta:
         model = Category
-        fields = ['id', 'name', 'slug', 'icon', 'children']
-
-    def get_children(self, obj):
-        if obj.get_children().exists():
-            return CategorySerializer(obj.get_children().filter(is_active=True), many=True).data
-        return []
+        fields = ['id', 'name', 'slug', 'icon', 'listings_count']
 
 
-class CategoryFlatSerializer(serializers.ModelSerializer):
+class CategoryMiniSerializer(serializers.ModelSerializer):
+    """Вложенная категория внутри Listing: {id, name}."""
+
     class Meta:
         model = Category
-        fields = ['id', 'name', 'slug', 'icon', 'parent']
+        fields = ['id', 'name']
 
 
 # ─── Item Images ──────────────────────────────────────────────────────────────
 
 class ItemImageSerializer(serializers.ModelSerializer):
+    url = serializers.SerializerMethodField()
+
     class Meta:
         model = ItemImage
-        fields = ['id', 'image', 'is_primary', 'order']
+        fields = ['id', 'url', 'is_primary', 'order']
         read_only_fields = ['id']
+
+    def get_url(self, obj):
+        request = self.context.get('request')
+        return request.build_absolute_uri(obj.image.url) if request else obj.image.url
 
 
 class ItemImageUploadSerializer(serializers.ModelSerializer):
@@ -40,37 +47,48 @@ class ItemImageUploadSerializer(serializers.ModelSerializer):
 
 # ─── Item ─────────────────────────────────────────────────────────────────────
 
+def _serialize_owner(item, request):
+    try:
+        profile = item.owner.profile
+        return {
+            'id': item.owner.id,
+            'full_name': profile.full_name or item.owner.phone,
+            'rating': profile.rating,
+            'verified': bool(profile.is_verified_kyc),
+        }
+    except Exception:
+        return {'id': item.owner.id, 'full_name': item.owner.phone, 'rating': 0, 'verified': False}
+
+
 class ItemListSerializer(serializers.ModelSerializer):
-    """Lightweight serializer for catalog list view."""
-    primary_image = serializers.SerializerMethodField()
-    category_name = serializers.CharField(source='category.name', read_only=True)
-    owner_name = serializers.SerializerMethodField()
+    """Serializer for the /listings/ list — matches the frontend Listing contract."""
+    category = CategoryMiniSerializer(read_only=True)
+    images = ItemImageSerializer(many=True, read_only=True)
+    owner = serializers.SerializerMethodField()
+    rating = serializers.SerializerMethodField()
+    reviews_count = serializers.SerializerMethodField()
     is_favorite = serializers.SerializerMethodField()
-    review_count = serializers.SerializerMethodField()
-    average_rating = serializers.SerializerMethodField()
 
     class Meta:
         model = Item
         fields = [
-            'id', 'title', 'price_per_day', 'deposit',
-            'condition', 'status', 'city', 'address',
-            'category_name', 'primary_image',
-            'owner_name', 'view_count', 'favorite_count',
-            'is_favorite', 'review_count', 'average_rating', 'created_at',
+            'id', 'title', 'description', 'category',
+            'price_per_day', 'deposit', 'condition',
+            'address', 'city', 'latitude', 'longitude', 'min_rental_days',
+            'status', 'images', 'owner', 'rating', 'reviews_count',
+            'view_count', 'favorite_count', 'is_favorite', 'created_at',
         ]
 
-    def get_primary_image(self, obj):
-        img = obj.primary_image
-        if img:
-            request = self.context.get('request')
-            return request.build_absolute_uri(img.image.url) if request else img.image.url
-        return None
+    def get_owner(self, obj):
+        return _serialize_owner(obj, self.context.get('request'))
 
-    def get_owner_name(self, obj):
-        try:
-            return obj.owner.profile.full_name or obj.owner.phone
-        except Exception:
-            return obj.owner.phone
+    def get_rating(self, obj):
+        from django.db.models import Avg
+        value = obj.reviews.filter(reviewee=obj.owner).aggregate(avg=Avg('rating'))['avg']
+        return round(value, 2) if value else 0
+
+    def get_reviews_count(self, obj):
+        return obj.reviews.filter(reviewee=obj.owner).count()
 
     def get_is_favorite(self, obj):
         request = self.context.get('request')
@@ -79,24 +97,16 @@ class ItemListSerializer(serializers.ModelSerializer):
             return False
         return Favorite.objects.filter(user=user, item=obj).exists()
 
-    def get_review_count(self, obj):
-        return obj.reviews.filter(reviewee=obj.owner).count()
-
-    def get_average_rating(self, obj):
-        from django.db.models import Avg
-        value = obj.reviews.filter(reviewee=obj.owner).aggregate(avg=Avg('rating'))['avg']
-        return round(value, 2) if value else 0
-
 
 class ItemDetailSerializer(serializers.ModelSerializer):
-    """Full serializer for single item view."""
+    """Full serializer for single item view — matches the frontend Listing contract."""
     images = ItemImageSerializer(many=True, read_only=True)
-    category = CategoryFlatSerializer(read_only=True)
+    category = CategoryMiniSerializer(read_only=True)
     blocked_dates = serializers.SerializerMethodField()
     owner = serializers.SerializerMethodField()
+    rating = serializers.SerializerMethodField()
+    reviews_count = serializers.SerializerMethodField()
     is_favorite = serializers.SerializerMethodField()
-    review_count = serializers.SerializerMethodField()
-    average_rating = serializers.SerializerMethodField()
 
     class Meta:
         model = Item
@@ -105,7 +115,7 @@ class ItemDetailSerializer(serializers.ModelSerializer):
             'condition', 'status', 'city', 'address', 'latitude', 'longitude',
             'category', 'images', 'blocked_dates', 'owner', 'created_at',
             'view_count', 'favorite_count', 'min_rental_days',
-            'is_favorite', 'review_count', 'average_rating',
+            'is_favorite', 'rating', 'reviews_count',
         ]
 
     def get_blocked_dates(self, obj):
@@ -115,22 +125,15 @@ class ItemDetailSerializer(serializers.ModelSerializer):
             return []
 
     def get_owner(self, obj):
-        try:
-            profile = obj.owner.profile
-            request = self.context.get('request')
-            avatar_url = None
-            if profile.avatar:
-                avatar_url = request.build_absolute_uri(profile.avatar.url) if request else profile.avatar.url
-            return {
-                'id': obj.owner.id,
-                'name': profile.full_name or obj.owner.phone,
-                'rating': profile.rating,
-                'rating_count': profile.rating_count,
-                'avatar': avatar_url,
-                'verification_status': profile.verification_status,
-            }
-        except Exception:
-            return {'id': obj.owner.id, 'name': obj.owner.phone}
+        return _serialize_owner(obj, self.context.get('request'))
+
+    def get_rating(self, obj):
+        from django.db.models import Avg
+        value = obj.reviews.filter(reviewee=obj.owner).aggregate(avg=Avg('rating'))['avg']
+        return round(value, 2) if value else 0
+
+    def get_reviews_count(self, obj):
+        return obj.reviews.filter(reviewee=obj.owner).count()
 
     def get_is_favorite(self, obj):
         request = self.context.get('request')
@@ -138,14 +141,6 @@ class ItemDetailSerializer(serializers.ModelSerializer):
         if not user or not user.is_authenticated:
             return False
         return Favorite.objects.filter(user=user, item=obj).exists()
-
-    def get_review_count(self, obj):
-        return obj.reviews.filter(reviewee=obj.owner).count()
-
-    def get_average_rating(self, obj):
-        from django.db.models import Avg
-        value = obj.reviews.filter(reviewee=obj.owner).aggregate(avg=Avg('rating'))['avg']
-        return round(value, 2) if value else 0
 
 
 class ItemCreateSerializer(serializers.ModelSerializer):
@@ -227,16 +222,6 @@ class ListingAvailabilitySerializer(serializers.Serializer):
             normalized.append(parsed.isoformat())
         attrs['blocked_dates'] = sorted(set(normalized))
         return attrs
-
-
-class FavoriteSerializer(serializers.ModelSerializer):
-    listing_id = serializers.IntegerField(source='item_id', read_only=True)
-    listing = ItemListSerializer(source='item', read_only=True)
-
-    class Meta:
-        model = Favorite
-        fields = ['id', 'listing_id', 'listing', 'created_at']
-        read_only_fields = fields
 
 
 class FavoriteCreateSerializer(serializers.Serializer):

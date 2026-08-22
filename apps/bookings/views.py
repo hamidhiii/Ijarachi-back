@@ -56,7 +56,11 @@ class DealCreateView(generics.ListCreateAPIView):
         return BookingCreateSerializer
 
     def get_queryset(self):
-        return Booking.objects.filter(renter=self.request.user).select_related('item', 'renter')
+        role = self.request.query_params.get('role', 'renter')
+        qs = Booking.objects.select_related('item__owner', 'renter').prefetch_related('item__images')
+        if role == 'owner':
+            return qs.filter(item__owner=self.request.user)
+        return qs.filter(renter=self.request.user)
 
     def create(self, request, *args, **kwargs):
         if not user_is_kyc_verified(request.user):
@@ -116,7 +120,7 @@ class MyDealsView(generics.ListAPIView):
 
     def get_queryset(self):
         role = self.request.query_params.get('role', 'renter')
-        qs = Booking.objects.select_related('item', 'renter').prefetch_related('item__images')
+        qs = Booking.objects.select_related('item__owner', 'renter').prefetch_related('item__images')
         if role == 'owner':
             return qs.filter(item__owner=self.request.user)
         return qs.filter(renter=self.request.user)
@@ -137,7 +141,7 @@ class DealDetailView(generics.RetrieveAPIView):
 
     def get_queryset(self):
         user = self.request.user
-        qs = Booking.objects.select_related('item__owner', 'renter').prefetch_related('photos')
+        qs = Booking.objects.select_related('item__owner', 'renter').prefetch_related('photos', 'item__images')
         return qs.filter(renter=user) | qs.filter(item__owner=user)
 
 
@@ -194,11 +198,12 @@ class DealPayView(APIView):
         charge_kyc_first_deal_cost.delay(request.user.pk, deal.pk)
 
         return Response({
-            'deal_id': deal.pk,
             'payment_id': payment.pk,
             'provider': payment.provider,
+            'redirect_url': payment.payment_url,
+            # Доп. поля для обратной совместимости с мобильным клиентом.
+            'deal_id': deal.pk,
             'amount': payment.amount,
-            'payment_url': payment.payment_url,
         }, status=status.HTTP_201_CREATED)
 
 

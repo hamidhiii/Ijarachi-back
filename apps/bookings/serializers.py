@@ -88,7 +88,30 @@ class BookingPhotoSerializer(serializers.ModelSerializer):
         read_only_fields = ['id', 'booking', 'uploaded_by', 'uploaded_by_phone', 'created_at']
 
 
+def _serialize_listing_mini(item, request):
+    image = item.primary_image
+    image_url = None
+    if image:
+        image_url = request.build_absolute_uri(image.image.url) if request else image.image.url
+    return {'id': item.id, 'title': item.title, 'image': image_url}
+
+
+def _serialize_user_mini(user):
+    try:
+        full_name = user.profile.full_name or user.phone
+    except Exception:
+        full_name = user.phone
+    return {'id': user.id, 'full_name': full_name}
+
+
 class BookingListSerializer(serializers.ModelSerializer):
+    listing = serializers.SerializerMethodField()
+    owner = serializers.SerializerMethodField()
+    renter = serializers.SerializerMethodField()
+    amount = serializers.DecimalField(source='total_price', max_digits=12, decimal_places=0, read_only=True)
+    status = serializers.SerializerMethodField()
+
+    # Дополнительные поля для обратной совместимости с мобильным клиентом.
     item_title = serializers.CharField(source='item.title', read_only=True)
     item_id = serializers.IntegerField(source='item.id', read_only=True)
     renter_phone = serializers.CharField(source='renter.phone', read_only=True)
@@ -97,23 +120,33 @@ class BookingListSerializer(serializers.ModelSerializer):
     class Meta:
         model = Booking
         fields = [
-            'id',
-            'item_id',
-            'item_title',
-            'renter_phone',
-            'start_date',
-            'end_date',
-            'days',
-            'total_price',
-            'status',
-            'escrow_status',
-            'created_at',
+            'id', 'listing', 'owner', 'renter', 'start_date', 'end_date',
+            'amount', 'status', 'created_at',
+            'item_id', 'item_title', 'renter_phone', 'days', 'total_price', 'escrow_status',
         ]
+
+    def get_listing(self, obj):
+        return _serialize_listing_mini(obj.item, self.context.get('request'))
+
+    def get_owner(self, obj):
+        return _serialize_user_mini(obj.item.owner)
+
+    def get_renter(self, obj):
+        return _serialize_user_mini(obj.renter)
+
+    def get_status(self, obj):
+        return obj.public_status
 
 
 class BookingDetailSerializer(serializers.ModelSerializer):
+    listing = serializers.SerializerMethodField()
+    owner = serializers.SerializerMethodField()
+    renter = serializers.SerializerMethodField()
+    amount = serializers.DecimalField(source='total_price', max_digits=12, decimal_places=0, read_only=True)
+    status = serializers.SerializerMethodField()
+    photos = serializers.SerializerMethodField()
+
     days = serializers.IntegerField(read_only=True)
-    photos = BookingPhotoSerializer(many=True, read_only=True)
     owner_phone = serializers.SerializerMethodField()
     owner_contact = serializers.SerializerMethodField()
     renter_contact = serializers.SerializerMethodField()
@@ -124,35 +157,15 @@ class BookingDetailSerializer(serializers.ModelSerializer):
     class Meta:
         model = Booking
         fields = [
-            'id',
-            'item',
-            'item_title',
-            'renter',
-            'owner_phone',
-            'owner_contact',
-            'renter_contact',
-            'start_date',
-            'end_date',
-            'days',
-            'price_per_day',
-            'deposit_amount',
-            'commission_amount',
-            'total_price',
-            'status',
-            'escrow_status',
-            'escrow_amount',
-            'progress_renter',
-            'progress_owner',
-            'renter_comment',
-            'dispute_reason',
-            'returned_at',
-            'contact_revealed_at',
-            'photos',
-            'created_at',
-            'updated_at',
+            'id', 'listing', 'owner', 'renter', 'start_date', 'end_date',
+            'amount', 'status', 'photos', 'created_at',
+            # Дополнительные поля для обратной совместимости с мобильным клиентом.
+            'item', 'item_title', 'owner_phone', 'owner_contact', 'renter_contact',
+            'days', 'price_per_day', 'deposit_amount', 'commission_amount', 'total_price',
+            'escrow_status', 'escrow_amount', 'progress_renter', 'progress_owner',
+            'renter_comment', 'dispute_reason', 'returned_at', 'contact_revealed_at', 'updated_at',
         ]
         read_only_fields = [
-            'renter',
             'price_per_day',
             'deposit_amount',
             'commission_amount',
@@ -160,6 +173,29 @@ class BookingDetailSerializer(serializers.ModelSerializer):
             'escrow_status',
             'escrow_amount',
         ]
+
+    def get_listing(self, obj):
+        return _serialize_listing_mini(obj.item, self.context.get('request'))
+
+    def get_owner(self, obj):
+        return _serialize_user_mini(obj.item.owner)
+
+    def get_renter(self, obj):
+        return _serialize_user_mini(obj.renter)
+
+    def get_status(self, obj):
+        return obj.public_status
+
+    def get_photos(self, obj):
+        request = self.context.get('request')
+        photos = obj.photos.all()
+
+        def urls_for(kind):
+            return [
+                (request.build_absolute_uri(p.image.url) if request else p.image.url)
+                for p in photos if p.kind == kind
+            ]
+        return {'before': urls_for('before'), 'after': urls_for('after')}
 
     def get_progress_renter(self, obj) -> str:
         return obj.progress_for('renter')
@@ -230,9 +266,15 @@ class BookingStatusUpdateSerializer(serializers.Serializer):
         (Booking.STATUS_RETURNED, 'owner'): [Booking.STATUS_COMPLETED],
     }
 
-    status = serializers.ChoiceField(choices=Booking.STATUS_CHOICES)
+    status = serializers.CharField()
 
-    def validate_status(self, new_status):
+    def validate_status(self, raw_status):
+        # Клиент присылает статус в публичном словаре (pending/confirmed/active/...),
+        # но допускаем и внутренние значения напрямую для обратной совместимости.
+        new_status = Booking.PUBLIC_STATUS_INPUT_MAP.get(raw_status, raw_status)
+        if new_status not in dict(Booking.STATUS_CHOICES):
+            raise serializers.ValidationError(f'Неизвестный статус: "{raw_status}".')
+
         booking = self.context['booking']
         user = self.context['request'].user
 

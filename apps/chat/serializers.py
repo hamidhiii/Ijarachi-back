@@ -4,12 +4,20 @@ from .models import Conversation, Message
 
 
 class MessageSerializer(serializers.ModelSerializer):
+    sender = serializers.SerializerMethodField()
     sender_phone = serializers.CharField(source='sender.phone', read_only=True)
 
     class Meta:
         model = Message
         fields = ['id', 'conversation', 'sender', 'sender_phone', 'text', 'image', 'is_read', 'created_at']
         read_only_fields = ['conversation', 'sender', 'sender_phone', 'is_read', 'created_at']
+
+    def get_sender(self, obj):
+        try:
+            full_name = obj.sender.profile.full_name or obj.sender.phone
+        except Exception:
+            full_name = obj.sender.phone
+        return {'id': obj.sender_id, 'full_name': full_name}
 
 
 class ConversationSerializer(serializers.ModelSerializer):
