@@ -132,6 +132,7 @@ SIMPLE_JWT = {
     'ROTATE_REFRESH_TOKENS': True,
     'BLACKLIST_AFTER_ROTATION': True,
     'AUTH_HEADER_TYPES': ('Bearer',),
+    'SIGNING_KEY': config('JWT_SIGNING_KEY', default=SECRET_KEY),
 }
 
 # ─── CORS ─────────────────────────────────────────────────────────────────────
