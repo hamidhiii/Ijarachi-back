@@ -101,6 +101,32 @@ docker compose up -d --build
 
 ---
 
+## 🖼 Хранилище фото (Backblaze B2 / S3)
+
+По умолчанию загруженные файлы ложатся в локальную папку `media/` — в Docker она живёт
+внутри контейнера и теряется при пересборке. `USE_S3=True` переключает все `ImageField`
+проекта (фото объявлений, аватары, вложения чата, фото сделок, документы KYC) на
+S3-совместимый бакет.
+
+1. В Backblaze создайте бакет и **обычный application key** с доступом только к этому бакету.
+   Master application key через S3-совместимый API не работает — будет 403 `InvalidAccessKeyId`.
+2. Заполните в `.env` блок `USE_S3` / `AWS_*` (`AWS_ACCESS_KEY_ID` — это keyID, а
+   `AWS_SECRET_ACCESS_KEY` — applicationKey). Endpoint и регион берутся из карточки бакета
+   (`s3.us-west-004.backblazeb2.com` → URL `https://s3.us-west-004.backblazeb2.com`, регион `us-west-004`).
+3. Перенесите уже загруженные файлы из `media/` в бакет (пути сохраняются, старые записи в БД остаются валидными):
+   ```bash
+   docker compose exec web python manage.py sync_media_to_s3 --dry-run
+   docker compose exec web python manage.py sync_media_to_s3
+   ```
+4. Перезапустите сервисы, чтобы они подхватили новый `.env`: `docker compose up -d`.
+
+`AWS_S3_PUBLIC_MEDIA=False` (по умолчанию) отдаёт файлы по временным подписанным ссылкам и
+требует приватного бакета. Это важно: в том же хранилище лежат сканы паспортов и селфи KYC
+(`kyc/...`), которые нельзя отдавать по постоянному URL. Публичный бакет
+(`AWS_S3_PUBLIC_MEDIA=True`) имеет смысл только как отдельное хранилище под фото объявлений.
+
+---
+
 ## 📚 Документация API (Swagger / ReDoc)
 
 Все роуты API автоматически документируются с помощью `drf-spectacular`. После запуска проекта документация доступна по ссылкам:

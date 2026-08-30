@@ -206,15 +206,39 @@ STATICFILES_DIRS = [BASE_DIR / 'static']
 MEDIA_URL = '/media/'
 MEDIA_ROOT = BASE_DIR / 'media'
 
+# S3-совместимое объектное хранилище (Backblaze B2, Yandex Object Storage и т.п.).
+# Включённый USE_S3 уводит в бакет все ImageField/FileField проекта: фото
+# объявлений, аватары, вложения чата, фото сделок и документы KYC.
 USE_S3 = config('USE_S3', default=False, cast=bool)
 if USE_S3:
     AWS_ACCESS_KEY_ID = config('AWS_ACCESS_KEY_ID', default='')
     AWS_SECRET_ACCESS_KEY = config('AWS_SECRET_ACCESS_KEY', default='')
     AWS_STORAGE_BUCKET_NAME = config('AWS_STORAGE_BUCKET_NAME', default='')
     AWS_S3_ENDPOINT_URL = config('AWS_S3_ENDPOINT_URL', default='')
-    AWS_S3_REGION_NAME = config('AWS_S3_REGION_NAME', default='ru-central1')
-    AWS_QUERYSTRING_AUTH = False
-    DEFAULT_FILE_STORAGE = 'storages.backends.s3boto3.S3Boto3Storage'
+    AWS_S3_REGION_NAME = config('AWS_S3_REGION_NAME', default='us-west-004')
+    AWS_S3_SIGNATURE_VERSION = 's3v4'
+    # B2 не принимает S3-заголовок x-amz-acl — с ACL по умолчанию загрузка падает
+    AWS_DEFAULT_ACL = None
+    # не затирать чужой файл при совпадении имени, а дописывать суффикс
+    AWS_S3_FILE_OVERWRITE = False
+    AWS_S3_OBJECT_PARAMETERS = {
+        'CacheControl': f"max-age={config('AWS_S3_CACHE_MAX_AGE', default=86400, cast=int)}",
+    }
+    # Публичный бакет — постоянные прямые ссылки. Приватный (по умолчанию) — временные
+    # подписанные ссылки: в media лежат паспорта и селфи KYC, их нельзя отдавать
+    # по угадываемому URL. Публичным бакет имеет смысл делать только под фото объявлений.
+    AWS_S3_PUBLIC_MEDIA = config('AWS_S3_PUBLIC_MEDIA', default=False, cast=bool)
+    AWS_QUERYSTRING_AUTH = not AWS_S3_PUBLIC_MEDIA
+    AWS_QUERYSTRING_EXPIRE = config('AWS_S3_URL_EXPIRE_SECONDS', default=3600, cast=int)
+    if AWS_S3_PUBLIC_MEDIA and config('AWS_S3_CUSTOM_DOMAIN', default=''):
+        # CDN/собственный домен перед бакетом; с подписанными ссылками несовместим
+        AWS_S3_CUSTOM_DOMAIN = config('AWS_S3_CUSTOM_DOMAIN')
+
+    STORAGES = {
+        'default': {'BACKEND': 'storages.backends.s3boto3.S3Boto3Storage'},
+        # статика остаётся на диске и раздаётся whitenoise
+        'staticfiles': {'BACKEND': 'django.contrib.staticfiles.storage.StaticFilesStorage'},
+    }
 
 # ─── Internationalization ─────────────────────────────────────────────────────
 
