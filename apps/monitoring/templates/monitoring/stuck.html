@@ -1,0 +1,38 @@
+{% extends 'monitoring/base.html' %}
+{% block title %}Застрявшие сделки — Монитор Rentoo{% endblock %}
+
+{% block content %}
+<h1>Застрявшие сделки</h1>
+<p class="sub">
+  Сделка попадает сюда, если слишком долго висит в статусе, из которого должна уходить сама,
+  либо если прошли даты аренды, а статус остался прежним.
+</p>
+
+<div class="scroll">
+  <table>
+    <thead>
+      <tr><th>#</th><th>Вещь</th><th>Статус</th><th>Что не так</th><th>Без движения</th><th>Участники</th></tr>
+    </thead>
+    <tbody>
+      {% for item in stuck_deals %}
+        <tr>
+          <td class="nowrap"><a href="{% url 'monitor:deal_detail' item.booking.pk %}">#{{ item.booking.pk }}</a></td>
+          <td>{{ item.booking.item.title }}</td>
+          <td><span class="tag">{{ item.booking.get_status_display }}</span></td>
+          <td>{{ item.reason }}</td>
+          <td class="nowrap">
+            <span class="tag {% if item.age_hours >= 72 %}error{% else %}warn{% endif %}">{{ item.age_hours }} ч</span>
+            <div class="muted">с {{ item.since|date:"d.m.y H:i" }}</div>
+          </td>
+          <td class="muted nowrap">
+            арендатор {{ item.booking.renter.phone }}<br>
+            владелец {{ item.booking.item.owner.phone }}
+          </td>
+        </tr>
+      {% empty %}
+        <tr><td colspan="6" class="empty">Всё движется, застрявших сделок нет.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endblock %}

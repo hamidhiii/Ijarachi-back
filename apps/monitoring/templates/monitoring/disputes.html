@@ -1,0 +1,35 @@
+{% extends 'monitoring/base.html' %}
+{% block title %}Споры — Монитор Rentoo{% endblock %}
+
+{% block content %}
+<h1>Споры</h1>
+<p class="sub">Сделки в статусе «Спор». Пока спор открыт, деньги по сделке заморожены. Сверху — самые давние.</p>
+
+<div class="scroll">
+  <table>
+    <thead>
+      <tr><th>#</th><th>Вещь</th><th>Причина</th><th>Сумма</th><th>Эскроу</th><th>Открыт</th><th>Участники</th></tr>
+    </thead>
+    <tbody>
+      {% for booking in page %}
+        <tr>
+          <td class="nowrap"><a href="{% url 'monitor:deal_detail' booking.pk %}">#{{ booking.pk }}</a></td>
+          <td>{{ booking.item.title }}</td>
+          <td>{{ booking.dispute_reason|default:"—" }}</td>
+          <td class="nowrap">{{ booking.total_price }}</td>
+          <td class="muted nowrap">{{ booking.get_escrow_status_display }}</td>
+          <td class="muted nowrap">{{ booking.updated_at|date:"d.m.y H:i" }}</td>
+          <td class="muted nowrap">
+            арендатор {{ booking.renter.phone }}<br>
+            владелец {{ booking.item.owner.phone }}
+          </td>
+        </tr>
+      {% empty %}
+        <tr><td colspan="7" class="empty">Открытых споров нет.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+{% include 'monitoring/_pager.html' %}
+{% endblock %}

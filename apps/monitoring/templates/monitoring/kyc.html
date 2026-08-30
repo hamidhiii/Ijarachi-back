@@ -1,0 +1,95 @@
+{% extends 'monitoring/base.html' %}
+{% block title %}KYC — Монитор Rentoo{% endblock %}
+
+{% block content %}
+<h1>KYC</h1>
+<p class="sub">
+  Очередь проверки документов. Решение по документу принимается в админке —
+  здесь видно, кто ждёт и сколько.
+</p>
+
+<form class="filters" method="get">
+  <select name="status">
+    <option value="">Любой статус</option>
+    {% for code, label in status_choices %}
+      <option value="{{ code }}" {% if code == status %}selected{% endif %}>{{ label }}</option>
+    {% endfor %}
+  </select>
+  <button type="submit">Показать</button>
+</form>
+
+<h2>Паспорта и ID-карты</h2>
+<div class="scroll">
+  <table>
+    <thead>
+      <tr><th>Телефон</th><th>Тип</th><th>ФИО в документе</th><th>Серия/номер</th><th>Статус</th><th>Подан</th><th></th></tr>
+    </thead>
+    <tbody>
+      {% for doc in page %}
+        <tr>
+          <td class="nowrap">{{ doc.user.phone }}</td>
+          <td class="nowrap">{{ doc.get_document_type_display }}</td>
+          <td>{{ doc.full_name|default:"—" }}</td>
+          <td class="nowrap">{{ doc.series }} {{ doc.number }}</td>
+          <td>
+            <span class="tag {% if doc.status == 'verified' %}ok{% elif doc.status == 'rejected' %}error{% else %}warn{% endif %}">
+              {{ doc.get_status_display }}
+            </span>
+          </td>
+          <td class="muted nowrap">{{ doc.submitted_at|date:"d.m.y H:i" }}</td>
+          <td class="nowrap">
+            {% if request.monitor_access.is_superuser %}
+              <a href="{% url 'admin:users_passportdocument_change' doc.pk %}">в админке</a>
+            {% endif %}
+          </td>
+        </tr>
+      {% empty %}
+        <tr><td colspan="7" class="empty">Документов с таким статусом нет.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+{% include 'monitoring/_pager.html' %}
+
+<h2>Сверка лица — не пройдена или в ожидании</h2>
+<div class="scroll">
+  <table>
+    <thead>
+      <tr><th>Телефон</th><th>Статус</th><th>Схожесть</th><th>Живость</th><th>Причина отказа</th><th>Подана</th></tr>
+    </thead>
+    <tbody>
+      {% for face in faces %}
+        <tr>
+          <td class="nowrap">{{ face.user.phone }}</td>
+          <td><span class="tag {% if face.status == 'failed' %}error{% else %}warn{% endif %}">{{ face.get_status_display }}</span></td>
+          <td class="nowrap">{{ face.face_match_score|default:"—" }}</td>
+          <td class="nowrap">{{ face.liveness_score|default:"—" }}</td>
+          <td>{{ face.fail_reason|default:"—" }}</td>
+          <td class="muted nowrap">{{ face.submitted_at|date:"d.m.y H:i" }}</td>
+        </tr>
+      {% empty %}
+        <tr><td colspan="6" class="empty">Все проверки лица пройдены.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+{% if legacy_pending %}
+  <h2>Старые заявки KYC</h2>
+  <div class="scroll">
+    <table>
+      <thead><tr><th>Телефон</th><th>Статус</th><th>Подана</th></tr></thead>
+      <tbody>
+        {% for doc in legacy_pending %}
+          <tr>
+            <td class="nowrap">{{ doc.user.phone }}</td>
+            <td><span class="tag warn">{{ doc.get_status_display }}</span></td>
+            <td class="muted nowrap">{{ doc.submitted_at|date:"d.m.y H:i" }}</td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+{% endif %}
+{% endblock %}

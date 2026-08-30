@@ -1,0 +1,80 @@
+{% extends 'monitoring/base.html' %}
+{% block title %}Обзор — Монитор Rentoo{% endblock %}
+
+{% block content %}
+<h1>Обзор</h1>
+<p class="sub">Данные читаются из базы в момент открытия страницы.</p>
+
+<div class="cards">
+  <div class="card">
+    <div class="label">Сделки всего</div>
+    <div class="value">{{ deals_total }}</div>
+    <div class="hint">+{{ deals_new }} за 30 дней</div>
+  </div>
+  {% if request.monitor_access.can_view_deals %}
+  <div class="card">
+    <div class="label">Застряли</div>
+    <div class="value">{{ stuck_total }}</div>
+    <div class="hint"><a href="{% url 'monitor:stuck' %}">разобрать</a></div>
+  </div>
+  {% endif %}
+  <div class="card">
+    <div class="label">Споры</div>
+    <div class="value">{{ disputes_total }}</div>
+    {% if request.monitor_access.can_view_disputes %}<div class="hint"><a href="{% url 'monitor:disputes' %}">открыть</a></div>{% endif %}
+  </div>
+  <div class="card">
+    <div class="label">KYC на проверке</div>
+    <div class="value">{{ kyc_pending }}</div>
+    {% if request.monitor_access.can_view_kyc %}<div class="hint"><a href="{% url 'monitor:kyc' %}">очередь</a></div>{% endif %}
+  </div>
+  <div class="card">
+    <div class="label">Платежи с ошибкой</div>
+    <div class="value">{{ payments_failed }}</div>
+    <div class="hint">за 30 дней</div>
+  </div>
+  <div class="card">
+    <div class="label">Заморожено в эскроу</div>
+    <div class="value">{{ escrow_held }}</div>
+    <div class="hint">сумма по удержанным сделкам</div>
+  </div>
+</div>
+
+<h2>Сделки по статусам</h2>
+<div class="scroll">
+  <table>
+    <thead><tr><th>Статус</th><th>Код</th><th>Сделок</th></tr></thead>
+    <tbody>
+      {% for row in status_rows %}
+        <tr>
+          <td>{{ row.label }}</td>
+          <td class="muted">{{ row.code }}</td>
+          <td>
+            {% if request.monitor_access.can_view_deals and row.total %}
+              <a href="{% url 'monitor:deals' %}?status={{ row.code }}">{{ row.total }}</a>
+            {% else %}{{ row.total }}{% endif %}
+          </td>
+        </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+{% if request.monitor_access.can_view_errors %}
+  <h2>Требует внимания</h2>
+  {% if checks %}
+    <div class="checks">
+      {% for check in checks %}
+        <div class="panel">
+          <span class="tag {% if check.severity == 'error' %}error{% else %}warn{% endif %}">{{ check.total }}</span>
+          <strong>{{ check.title }}</strong>
+          <div class="muted">{{ check.hint }}</div>
+        </div>
+      {% endfor %}
+    </div>
+    <p><a href="{% url 'monitor:errors' %}">Все ошибки с разбивкой →</a></p>
+  {% else %}
+    <div class="panel muted">Проверки ничего не нашли.</div>
+  {% endif %}
+{% endif %}
+{% endblock %}

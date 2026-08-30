@@ -198,3 +198,33 @@ class DealReview(models.Model):
 
     def __str__(self):
         return f'Review #{self.pk}: {self.rating}'
+
+
+class BookingStatusLog(models.Model):
+    """
+    История переходов статуса и эскроу сделки. Пишется сигналом на post_save
+    Booking, поэтому попадают и переходы через transition_to(), и прямые
+    присваивания status/escrow_status во вьюхах и задачах Celery.
+    """
+    booking = models.ForeignKey(
+        Booking,
+        on_delete=models.CASCADE,
+        related_name='status_logs',
+        verbose_name='Сделка',
+    )
+    from_status = models.CharField('Статус до', max_length=30, blank=True)
+    to_status = models.CharField('Статус после', max_length=30)
+    from_escrow = models.CharField('Эскроу до', max_length=20, blank=True)
+    to_escrow = models.CharField('Эскроу после', max_length=20, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        verbose_name = 'Переход статуса сделки'
+        verbose_name_plural = 'Переходы статусов сделок'
+        ordering = ['created_at']
+        indexes = [
+            models.Index(fields=['booking', 'created_at'], name='bookings_bsl_booking_idx'),
+        ]
+
+    def __str__(self):
+        return f'#{self.booking_id}: {self.from_status or "—"} → {self.to_status}'

@@ -1,0 +1,48 @@
+{% extends 'monitoring/base.html' %}
+{% block title %}Доступы — Монитор Rentoo{% endblock %}
+
+{% block content %}
+<h1>Доступы к монитору</h1>
+<p class="sub">
+  Кто и что видит в мониторе. Суперюзерам доступ выдавать не нужно — им открыто всё.
+</p>
+
+<div class="filters">
+  <a class="btn" href="{% url 'monitor:access_create' %}?mode=new">Завести сотрудника</a>
+  <a class="btn ghost" href="{% url 'monitor:access_create' %}?mode=existing">Выдать доступ существующему</a>
+</div>
+
+<div class="scroll">
+  <table>
+    <thead>
+      <tr><th>Телефон</th><th>Разделы</th><th>Статус</th><th>Заметка</th><th>Кем выдан</th><th>Когда</th><th></th></tr>
+    </thead>
+    <tbody>
+      {% for access in accesses %}
+        <tr>
+          <td class="nowrap">{{ access.user.phone }}</td>
+          <td>
+            {% for section in access.sections %}<span class="tag">{{ section }}</span> {% empty %}<span class="muted">ничего не открыто</span>{% endfor %}
+          </td>
+          <td>{% if access.is_active %}<span class="tag ok">включён</span>{% else %}<span class="tag error">выключен</span>{% endif %}</td>
+          <td class="muted">{{ access.note|default:"—" }}</td>
+          <td class="muted nowrap">{{ access.created_by.phone|default:"—" }}</td>
+          <td class="muted nowrap">{{ access.created_at|date:"d.m.y" }}</td>
+          <td class="nowrap"><a href="{% url 'monitor:access_edit' access.pk %}">изменить</a></td>
+        </tr>
+      {% empty %}
+        <tr><td colspan="7" class="empty">Доступ пока никому не выдан.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+<h2>Суперюзеры</h2>
+<div class="panel">
+  {% for user in superusers %}
+    <div>{{ user.phone }} — полный доступ к монитору и админке</div>
+  {% empty %}
+    <div class="muted">Суперюзеров нет.</div>
+  {% endfor %}
+</div>
+{% endblock %}

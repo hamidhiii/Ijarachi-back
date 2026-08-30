@@ -1,0 +1,52 @@
+{% extends 'monitoring/base.html' %}
+{% block title %}Ошибки — Монитор Rentoo{% endblock %}
+
+{% block content %}
+<h1>Ошибки для разбора</h1>
+<p class="sub">
+  Проверки считаются по базе прямо сейчас.
+  <span class="tag error">красные</span> — деньги или данные разъехались,
+  <span class="tag warn">жёлтые</span> — просто висит и ждёт человека.
+</p>
+
+{% if stuck_total %}
+  <div class="panel">
+    <span class="tag warn">{{ stuck_total }}</span>
+    <strong>Сделки без движения</strong>
+    <div class="muted">Застряли в статусе или просрочены по датам аренды. <a href="{% url 'monitor:stuck' %}">Открыть список →</a></div>
+  </div>
+{% endif %}
+
+{% for check in checks %}
+  <div class="panel">
+    <div>
+      <span class="tag {% if check.severity == 'error' %}error{% else %}warn{% endif %}">{{ check.total }}</span>
+      <strong>{{ check.title }}</strong>
+    </div>
+    <div class="muted" style="margin-bottom:10px">{{ check.hint }}</div>
+    <div class="scroll">
+      <table>
+        <tbody>
+          {% for issue in check.issues %}
+            <tr>
+              <td>
+                {% if issue.url %}<a href="{{ issue.url }}">{{ issue.label }}</a>{% else %}{{ issue.label }}{% endif %}
+              </td>
+              <td class="muted">{{ issue.detail }}</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% if check.truncated %}
+      <div class="muted" style="margin-top:8px">
+        Показаны первые {{ check.issues|length }} из {{ check.total }}.
+      </div>
+    {% endif %}
+  </div>
+{% empty %}
+  {% if not stuck_total %}
+    <div class="panel empty">Проверки ничего не нашли — расхождений нет.</div>
+  {% endif %}
+{% endfor %}
+{% endblock %}

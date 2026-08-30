@@ -62,6 +62,7 @@ INSTALLED_APPS = [
     'apps.payments',
     'apps.chat',
     'apps.notifications',
+    'apps.monitoring',
 ]
 
 MIDDLEWARE = [
@@ -257,6 +258,22 @@ if USE_S3:
         # статика остаётся на диске и раздаётся whitenoise
         'staticfiles': {'BACKEND': 'django.contrib.staticfiles.storage.StaticFilesStorage'},
     }
+
+# ─── Монитор (/monitor/) ────────────────────────────────────────
+
+# Сколько часов сделка может провисеть в статусе, из которого должна уйти сама,
+# прежде чем попадёт в «застрявшие». paid и in_progress сюда не входят: там
+# ориентир не таймер, а даты самой аренды (см. apps/monitoring/checks.py).
+MONITOR_STUCK_HOURS = {
+    'draft': config('MONITOR_STUCK_DRAFT_HOURS', default=24, cast=int),
+    'pending_payment': config('MONITOR_STUCK_PENDING_PAYMENT_HOURS', default=2, cast=int),
+    'returned': config('MONITOR_STUCK_RETURNED_HOURS', default=48, cast=int),
+    'disputed': config('MONITOR_STUCK_DISPUTED_HOURS', default=72, cast=int),
+}
+# Платёж в pending дольше этого срока — вебхук провайдера не доехал.
+MONITOR_PAYMENT_PENDING_HOURS = config('MONITOR_PAYMENT_PENDING_HOURS', default=2, cast=int)
+# Сколько документ KYC может ждать проверки, прежде чем это станет проблемой.
+MONITOR_KYC_PENDING_HOURS = config('MONITOR_KYC_PENDING_HOURS', default=24, cast=int)
 
 # ─── Internationalization ─────────────────────────────────────────────────────
 

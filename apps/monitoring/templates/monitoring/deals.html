@@ -1,0 +1,47 @@
+{% extends 'monitoring/base.html' %}
+{% block title %}Сделки — Монитор Rentoo{% endblock %}
+
+{% block content %}
+<h1>Сделки</h1>
+<p class="sub">Поиск по номеру сделки, названию вещи или телефону участника.</p>
+
+<form class="filters" method="get">
+  <input type="text" name="q" value="{{ query }}" placeholder="123, телефон или название" size="32">
+  <select name="status">
+    <option value="">Любой статус</option>
+    {% for code, label in status_choices %}
+      <option value="{{ code }}" {% if code == status %}selected{% endif %}>{{ label }}</option>
+    {% endfor %}
+  </select>
+  <button type="submit">Найти</button>
+  {% if query or status %}<a class="btn ghost" href="{% url 'monitor:deals' %}">Сбросить</a>{% endif %}
+</form>
+
+<div class="scroll">
+  <table>
+    <thead>
+      <tr><th>#</th><th>Вещь</th><th>Арендатор</th><th>Владелец</th><th>Период</th>
+          <th>Сумма</th><th>Статус</th><th>Эскроу</th><th>Обновлена</th></tr>
+    </thead>
+    <tbody>
+      {% for booking in page %}
+        <tr>
+          <td class="nowrap"><a href="{% url 'monitor:deal_detail' booking.pk %}">#{{ booking.pk }}</a></td>
+          <td>{{ booking.item.title }}</td>
+          <td class="nowrap">{{ booking.renter.phone }}</td>
+          <td class="nowrap">{{ booking.item.owner.phone }}</td>
+          <td class="nowrap">{{ booking.start_date|date:"d.m.y" }} — {{ booking.end_date|date:"d.m.y" }}</td>
+          <td class="nowrap">{{ booking.total_price }}</td>
+          <td><span class="tag">{{ booking.get_status_display }}</span></td>
+          <td class="muted nowrap">{{ booking.get_escrow_status_display }}</td>
+          <td class="muted nowrap">{{ booking.updated_at|date:"d.m.y H:i" }}</td>
+        </tr>
+      {% empty %}
+        <tr><td colspan="9" class="empty">Ничего не найдено.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+{% include 'monitoring/_pager.html' %}
+{% endblock %}

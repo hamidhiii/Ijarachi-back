@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{% block title %}Монитор Rentoo{% endblock %}</title>
+<style>
+  :root {
+    --bg: #f4f5f7; --panel: #fff; --line: #dfe3e8; --text: #1b1f24; --muted: #6b7480;
+    --accent: #1a56db; --error: #b42318; --error-bg: #fef3f2; --warn: #b54708; --warn-bg: #fffaeb;
+    --ok: #067647; --ok-bg: #ecfdf3;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #14171c; --panel: #1c2027; --line: #2c323b; --text: #e8eaed; --muted: #98a1ad;
+      --accent: #6f9dff; --error: #ff8a80; --error-bg: #2a1a1a; --warn: #f0c36d; --warn-bg: #2a2318;
+      --ok: #6ee7a8; --ok-bg: #14261d;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+         font: 14px/1.45 -apple-system, "Segoe UI", Roboto, Arial, sans-serif; }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  header { background: var(--panel); border-bottom: 1px solid var(--line); padding: 10px 20px;
+           display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
+  header .brand { font-weight: 700; letter-spacing: .2px; }
+  header .spacer { flex: 1; }
+  header .who { color: var(--muted); font-size: 13px; }
+  nav { background: var(--panel); border-bottom: 1px solid var(--line); padding: 0 20px;
+        display: flex; gap: 4px; overflow-x: auto; }
+  nav a { padding: 9px 12px; color: var(--muted); border-bottom: 2px solid transparent; white-space: nowrap; }
+  nav a:hover { text-decoration: none; color: var(--text); }
+  nav a.on { color: var(--text); border-bottom-color: var(--accent); font-weight: 600; }
+  main { padding: 20px; max-width: 1400px; }
+  h1 { font-size: 20px; margin: 0 0 4px; }
+  h2 { font-size: 15px; margin: 24px 0 8px; }
+  .sub { color: var(--muted); margin: 0 0 18px; }
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 14px 16px; margin-bottom: 16px; }
+  .cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 12px; margin-bottom: 20px; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 12px 14px; }
+  .card .label { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .4px; }
+  .card .value { font-size: 24px; font-weight: 700; margin-top: 4px; }
+  .card .hint { color: var(--muted); font-size: 12px; margin-top: 2px; }
+  .scroll { overflow-x: auto; }
+  table { border-collapse: collapse; width: 100%; background: var(--panel); }
+  th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { color: var(--muted); font-weight: 600; font-size: 12px; text-transform: uppercase; letter-spacing: .3px; white-space: nowrap; }
+  tbody tr:hover { background: rgba(127, 127, 127, .07); }
+  .tag { display: inline-block; padding: 1px 8px; border-radius: 20px; font-size: 12px; border: 1px solid var(--line); white-space: nowrap; }
+  .tag.error { color: var(--error); background: var(--error-bg); border-color: transparent; }
+  .tag.warn { color: var(--warn); background: var(--warn-bg); border-color: transparent; }
+  .tag.ok { color: var(--ok); background: var(--ok-bg); border-color: transparent; }
+  .muted { color: var(--muted); }
+  .nowrap { white-space: nowrap; }
+  form.filters { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-bottom: 14px; }
+  input[type=text], input[type=password], select, textarea {
+    padding: 7px 9px; border: 1px solid var(--line); border-radius: 6px;
+    background: var(--panel); color: var(--text); font: inherit; }
+  button, .btn { padding: 7px 14px; border: 1px solid transparent; border-radius: 6px; background: var(--accent);
+                 color: #fff; font: inherit; cursor: pointer; }
+  .btn.ghost { background: transparent; border-color: var(--line); color: var(--text); }
+  .btn.danger { background: var(--error); }
+  .msg { padding: 10px 14px; border-radius: 8px; background: var(--ok-bg); color: var(--ok); margin-bottom: 14px; }
+  .field { margin-bottom: 12px; }
+  .field label { display: block; font-weight: 600; margin-bottom: 4px; }
+  .field .errors { color: var(--error); font-size: 13px; }
+  .checks { display: grid; gap: 10px; }
+  .empty { color: var(--muted); padding: 24px; text-align: center; }
+  .pager { margin-top: 14px; display: flex; gap: 10px; align-items: center; color: var(--muted); }
+  pre { background: var(--bg); border: 1px solid var(--line); border-radius: 6px; padding: 10px;
+        overflow-x: auto; font-size: 12px; margin: 0; }
+</style>
+</head>
+<body>
+{% with access=request.monitor_access %}
+<header>
+  <span class="brand">Rentoo · Монитор</span>
+  <span class="spacer"></span>
+  <span class="who">{{ request.user.phone }}{% if access.is_superuser %} · суперюзер{% endif %}</span>
+  {% if access.is_superuser %}<a href="{% url 'admin:index' %}">Админка</a>{% endif %}
+  <a href="{% url 'monitor:logout' %}">Выйти</a>
+</header>
+<nav>
+  {% with here=request.resolver_match.url_name %}
+  <a href="{% url 'monitor:index' %}" class="{% if here == 'index' %}on{% endif %}">Обзор</a>
+  {% if access.can_view_deals %}
+    <a href="{% url 'monitor:deals' %}" class="{% if here == 'deals' or here == 'deal_detail' %}on{% endif %}">Сделки</a>
+    <a href="{% url 'monitor:stuck' %}" class="{% if here == 'stuck' %}on{% endif %}">Застрявшие</a>
+  {% endif %}
+  {% if access.can_view_disputes %}<a href="{% url 'monitor:disputes' %}" class="{% if here == 'disputes' %}on{% endif %}">Споры</a>{% endif %}
+  {% if access.can_view_kyc %}<a href="{% url 'monitor:kyc' %}" class="{% if here == 'kyc' %}on{% endif %}">KYC</a>{% endif %}
+  {% if access.can_view_payments %}<a href="{% url 'monitor:payments' %}" class="{% if here == 'payments' %}on{% endif %}">Платежи</a>{% endif %}
+  {% if access.can_view_errors %}<a href="{% url 'monitor:errors' %}" class="{% if here == 'errors' %}on{% endif %}">Ошибки</a>{% endif %}
+  {% if access.can_manage_access %}<a href="{% url 'monitor:access_list' %}" class="{% if 'access' in here %}on{% endif %}">Доступы</a>{% endif %}
+  {% endwith %}
+</nav>
+{% endwith %}
+<main>
+  {% for message in messages %}<div class="msg">{{ message }}</div>{% endfor %}
+  {% block content %}{% endblock %}
+</main>
+</body>
+</html>

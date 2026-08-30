@@ -1,0 +1,153 @@
+{% extends 'monitoring/base.html' %}
+{% block title %}Сделка #{{ booking.pk }} — Монитор Rentoo{% endblock %}
+
+{% block content %}
+<h1>Сделка #{{ booking.pk }}</h1>
+<p class="sub">
+  {{ booking.item.title }} ·
+  <span class="tag">{{ booking.get_status_display }}</span>
+  <span class="tag">эскроу: {{ booking.get_escrow_status_display }}</span>
+  {% if request.monitor_access.is_superuser %}
+    · <a href="{% url 'admin:bookings_booking_change' booking.pk %}">открыть в админке</a>
+  {% endif %}
+</p>
+
+<div class="cards">
+  <div class="card"><div class="label">Период</div>
+    <div class="value" style="font-size:16px">{{ booking.start_date|date:"d.m.Y" }} — {{ booking.end_date|date:"d.m.Y" }}</div>
+    <div class="hint">{{ booking.days }} дн.</div></div>
+  <div class="card"><div class="label">Итого</div><div class="value">{{ booking.total_price }}</div>
+    <div class="hint">цена/день {{ booking.price_per_day }}</div></div>
+  <div class="card"><div class="label">Залог</div><div class="value">{{ booking.deposit_amount }}</div>
+    <div class="hint">комиссия {{ booking.commission_amount }}</div></div>
+  <div class="card"><div class="label">В эскроу</div><div class="value">{{ booking.escrow_amount }}</div>
+    <div class="hint">{{ booking.get_escrow_status_display }}</div></div>
+</div>
+
+<div class="panel">
+  <h2 style="margin-top:0">Участники</h2>
+  <div class="scroll">
+    <table>
+      <thead><tr><th>Роль</th><th>Телефон</th><th>ФИО</th><th>KYC</th><th>Создан</th></tr></thead>
+      <tbody>
+        <tr>
+          <td>Арендатор</td>
+          <td class="nowrap">{{ booking.renter.phone }}</td>
+          <td>{{ booking.renter.profile.full_name|default:"—" }}</td>
+          <td>{% if booking.renter.profile.is_verified_kyc %}<span class="tag ok">пройден</span>{% else %}<span class="tag warn">нет</span>{% endif %}</td>
+          <td class="muted nowrap">{{ booking.renter.date_joined|date:"d.m.y" }}</td>
+        </tr>
+        <tr>
+          <td>Владелец</td>
+          <td class="nowrap">{{ booking.item.owner.phone }}</td>
+          <td>{{ booking.item.owner.profile.full_name|default:"—" }}</td>
+          <td>{% if booking.item.owner.profile.is_verified_kyc %}<span class="tag ok">пройден</span>{% else %}<span class="tag warn">нет</span>{% endif %}</td>
+          <td class="muted nowrap">{{ booking.item.owner.date_joined|date:"d.m.y" }}</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<h2>Что видят стороны</h2>
+<div class="panel">
+  <div>Арендатор: <strong>{{ progress_renter }}</strong></div>
+  <div>Владелец: <strong>{{ progress_owner }}</strong></div>
+  {% if booking.dispute_reason %}<div style="margin-top:8px">Причина спора: {{ booking.dispute_reason }}</div>{% endif %}
+  {% if booking.renter_comment %}<div class="muted" style="margin-top:8px">Комментарий арендатора: {{ booking.renter_comment }}</div>{% endif %}
+</div>
+
+<h2>История статусов</h2>
+<div class="scroll">
+  <table>
+    <thead><tr><th>Когда</th><th>Статус</th><th>Эскроу</th></tr></thead>
+    <tbody>
+      {% for log in logs %}
+        <tr>
+          <td class="nowrap">{{ log.created_at|date:"d.m.Y H:i:s" }}</td>
+          <td class="nowrap">{{ log.from_status|default:"—" }} → <strong>{{ log.to_status }}</strong></td>
+          <td class="muted nowrap">{% if log.from_escrow != log.to_escrow %}{{ log.from_escrow|default:"—" }} → {{ log.to_escrow|default:"—" }}{% else %}{{ log.to_escrow|default:"—" }}{% endif %}</td>
+        </tr>
+      {% empty %}
+        <tr><td colspan="3" class="empty">
+          История начала писаться позже этой сделки. Последнее изменение: {{ booking.updated_at|date:"d.m.Y H:i" }}, создана {{ booking.created_at|date:"d.m.Y H:i" }}.
+        </td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+{% if request.monitor_access.can_view_payments %}
+  <h2>Платежи</h2>
+  <div class="scroll">
+    <table>
+      <thead><tr><th>#</th><th>Провайдер</th><th>Сумма (тийин)</th><th>Статус</th><th>ID у провайдера</th><th>Создан</th></tr></thead>
+      <tbody>
+        {% for payment in payments %}
+          <tr>
+            <td>{{ payment.pk }}</td>
+            <td>{{ payment.get_provider_display }}</td>
+            <td class="nowrap">{{ payment.amount }}</td>
+            <td><span class="tag {% if payment.status == 'failed' %}error{% elif payment.status == 'pending' %}warn{% else %}ok{% endif %}">{{ payment.get_status_display }}</span></td>
+            <td class="muted">{{ payment.provider_transaction_id|default:"—" }}</td>
+            <td class="muted nowrap">{{ payment.created_at|date:"d.m.y H:i" }}</td>
+          </tr>
+          {% if payment.raw_request %}
+            <tr><td colspan="6"><pre>{{ payment.raw_request }}</pre></td></tr>
+          {% endif %}
+        {% empty %}
+          <tr><td colspan="6" class="empty">Платежей нет.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <h2>Движения денег</h2>
+  <div class="scroll">
+    <table>
+      <thead><tr><th>Тип</th><th>Сумма</th><th>Кому</th><th>Когда</th></tr></thead>
+      <tbody>
+        {% for tx in transactions %}
+          <tr>
+            <td>{{ tx.get_type_display }}</td>
+            <td class="nowrap">{{ tx.amount }} {{ tx.currency }}</td>
+            <td class="nowrap">{{ tx.user.phone|default:"—" }}</td>
+            <td class="muted nowrap">{{ tx.created_at|date:"d.m.y H:i" }}</td>
+          </tr>
+        {% empty %}
+          <tr><td colspan="4" class="empty">Движений нет.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+{% endif %}
+
+<h2>Фото по сделке</h2>
+<div class="scroll">
+  <table>
+    <thead><tr><th>Тип</th><th>Кто загрузил</th><th>Комментарий</th><th>Когда</th><th>Файл</th></tr></thead>
+    <tbody>
+      {% for photo in photos %}
+        <tr>
+          <td>{{ photo.get_kind_display }}</td>
+          <td class="nowrap">{{ photo.uploaded_by.phone }}</td>
+          <td>{{ photo.comment|default:"—" }}</td>
+          <td class="muted nowrap">{{ photo.created_at|date:"d.m.y H:i" }}</td>
+          <td><a href="{{ photo.image.url }}" target="_blank" rel="noopener">открыть</a></td>
+        </tr>
+      {% empty %}
+        <tr><td colspan="5" class="empty">Фото не загружали.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+<h2>Переписка</h2>
+<div class="panel">
+  {% for conversation in conversations %}
+    <div>Диалог #{{ conversation.pk }} — сообщений: {{ conversation.message_count }}, последнее обновление {{ conversation.updated_at|date:"d.m.y H:i" }}</div>
+  {% empty %}
+    <div class="muted">Диалогов по сделке нет.</div>
+  {% endfor %}
+</div>
+{% endblock %}

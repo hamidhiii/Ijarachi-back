@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Вход — Монитор Rentoo</title>
+<style>
+  :root { --bg:#f4f5f7; --panel:#fff; --line:#dfe3e8; --text:#1b1f24; --muted:#6b7480; --accent:#1a56db; --error:#b42318; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#14171c; --panel:#1c2027; --line:#2c323b; --text:#e8eaed; --muted:#98a1ad; --accent:#6f9dff; --error:#ff8a80; }
+  }
+  * { box-sizing: border-box; }
+  body { margin:0; min-height:100vh; display:flex; align-items:center; justify-content:center;
+         background:var(--bg); color:var(--text); font:14px/1.45 -apple-system,"Segoe UI",Roboto,Arial,sans-serif; }
+  .box { background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:26px; width:340px; max-width:92vw; }
+  h1 { font-size:18px; margin:0 0 4px; }
+  p.sub { color:var(--muted); margin:0 0 20px; font-size:13px; }
+  label { display:block; font-weight:600; margin-bottom:4px; }
+  input { width:100%; padding:9px 10px; border:1px solid var(--line); border-radius:6px;
+          background:var(--bg); color:var(--text); font:inherit; margin-bottom:14px; }
+  button { width:100%; padding:9px; border:0; border-radius:6px; background:var(--accent); color:#fff; font:inherit; cursor:pointer; }
+  .errors { color:var(--error); font-size:13px; margin-bottom:12px; }
+</style>
+</head>
+<body>
+<form class="box" method="post">
+  {% csrf_token %}
+  <h1>Монитор Rentoo</h1>
+  <p class="sub">Вход только для сотрудников с выданным доступом.</p>
+
+  {% if form.non_field_errors %}<div class="errors">{{ form.non_field_errors }}</div>{% endif %}
+
+  {% for field in form %}
+    <label for="{{ field.id_for_label }}">{{ field.label }}</label>
+    {{ field }}
+    {% if field.errors %}<div class="errors">{{ field.errors }}</div>{% endif %}
+  {% endfor %}
+
+  <button type="submit">Войти</button>
+</form>
+</body>
+</html>

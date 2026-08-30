@@ -11,6 +11,7 @@ from .views import AdminDashboardView, AdminFinanceExportView
 
 urlpatterns = [
     path('admin/', admin.site.urls),
+    path('monitor/', include('apps.monitoring.urls')),
 
     # API v1
     path('api/v1/auth/', include('apps.users.urls.auth')),

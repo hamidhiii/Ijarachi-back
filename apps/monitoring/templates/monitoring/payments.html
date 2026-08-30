@@ -1,0 +1,72 @@
+{% extends 'monitoring/base.html' %}
+{% block title %}Платежи — Монитор Rentoo{% endblock %}
+
+{% block content %}
+<h1>Платежи</h1>
+<p class="sub">Платежи провайдеров и движения денег. Суммы платежей — в тийинах, как их присылает провайдер.</p>
+
+<form class="filters" method="get">
+  <select name="status">
+    <option value="">Любой статус</option>
+    {% for code, label in status_choices %}
+      <option value="{{ code }}" {% if code == status %}selected{% endif %}>{{ label }}</option>
+    {% endfor %}
+  </select>
+  <select name="provider">
+    <option value="">Любой провайдер</option>
+    {% for code, label in provider_choices %}
+      <option value="{{ code }}" {% if code == provider %}selected{% endif %}>{{ label }}</option>
+    {% endfor %}
+  </select>
+  <button type="submit">Показать</button>
+  {% if status or provider %}<a class="btn ghost" href="{% url 'monitor:payments' %}">Сбросить</a>{% endif %}
+</form>
+
+<div class="scroll">
+  <table>
+    <thead>
+      <tr><th>#</th><th>Провайдер</th><th>Сделка</th><th>Сумма (тийин)</th><th>Статус</th><th>ID у провайдера</th><th>Создан</th></tr>
+    </thead>
+    <tbody>
+      {% for payment in page %}
+        <tr>
+          <td>{{ payment.pk }}</td>
+          <td class="nowrap">{{ payment.get_provider_display }}</td>
+          <td class="nowrap"><a href="{% url 'monitor:deal_detail' payment.booking_id %}">#{{ payment.booking_id }}</a>
+            <div class="muted">{{ payment.booking.item.title|truncatechars:40 }}</div></td>
+          <td class="nowrap">{{ payment.amount }}</td>
+          <td><span class="tag {% if payment.status == 'failed' %}error{% elif payment.status == 'pending' %}warn{% else %}ok{% endif %}">{{ payment.get_status_display }}</span></td>
+          <td class="muted">{{ payment.provider_transaction_id|default:"—" }}</td>
+          <td class="muted nowrap">{{ payment.created_at|date:"d.m.y H:i" }}</td>
+        </tr>
+      {% empty %}
+        <tr><td colspan="7" class="empty">Платежей не найдено.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+{% include 'monitoring/_pager.html' %}
+
+<h2>Последние движения денег</h2>
+<div class="scroll">
+  <table>
+    <thead><tr><th>Тип</th><th>Сумма</th><th>Пользователь</th><th>Сделка</th><th>Когда</th></tr></thead>
+    <tbody>
+      {% for tx in transactions %}
+        <tr>
+          <td class="nowrap">{{ tx.get_type_display }}</td>
+          <td class="nowrap">{{ tx.amount }} {{ tx.currency }}</td>
+          <td class="nowrap">{{ tx.user.phone|default:"—" }}</td>
+          <td class="nowrap">
+            {% if tx.booking_id %}<a href="{% url 'monitor:deal_detail' tx.booking_id %}">#{{ tx.booking_id }}</a>{% else %}—{% endif %}
+          </td>
+          <td class="muted nowrap">{{ tx.created_at|date:"d.m.y H:i" }}</td>
+        </tr>
+      {% empty %}
+        <tr><td colspan="5" class="empty">Движений нет.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endblock %}
