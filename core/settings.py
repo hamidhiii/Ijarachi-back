@@ -12,6 +12,24 @@ SECRET_KEY = config('SECRET_KEY', default='django-insecure-change-me-in-producti
 DEBUG = config('DEBUG', default=False, cast=bool)
 ALLOWED_HOSTS = config('ALLOWED_HOSTS', default='localhost,127.0.0.1,169.58.192.146,back.rentoo.uz').split(',')
 
+# Для POST с формы (вход в /admin/) Django сверяет заголовок Origin со схемой и хостом
+# самого запроса. За nginx с TLS-терминацией Django видит голый http и ждёт
+# http://back.rentoo.uz, а браузер шлёт https:// — отсюда 403 «CSRF verification failed».
+CSRF_TRUSTED_ORIGINS = [
+    origin for origin in config(
+        'CSRF_TRUSTED_ORIGINS',
+        default='https://back.rentoo.uz,https://ijarachi-front.vercel.app',
+    ).split(',')
+    if origin
+]
+
+# Включать только если nginx сам выставляет X-Forwarded-Proto и не пропускает его
+# от клиента: иначе любой сможет выдать http-запрос за https.
+if config('USE_X_FORWARDED_PROTO', default=False, cast=bool):
+    SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
+    SESSION_COOKIE_SECURE = True
+    CSRF_COOKIE_SECURE = True
+
 # ─── Apps ────────────────────────────────────────────────────────────────────
 
 INSTALLED_APPS = [
