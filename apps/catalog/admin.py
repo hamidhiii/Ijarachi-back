@@ -5,11 +5,12 @@ from .models import Category, Favorite, Item, ItemImage, ItemAvailability
 
 @admin.register(Category)
 class CategoryAdmin(DraggableMPTTAdmin):
-    list_display = ['tree_actions', 'indented_title', 'slug', 'is_active']
+    list_display = ['tree_actions', 'indented_title', 'name_uz', 'slug', 'is_active']
     list_display_links = ['indented_title']
+    list_editable = ['name_uz']
     list_filter = ['is_active']
     prepopulated_fields = {'slug': ('name',)}
-    search_fields = ['name', 'slug']
+    search_fields = ['name', 'name_uz', 'slug']
 
 
 class ItemImageInline(admin.TabularInline):

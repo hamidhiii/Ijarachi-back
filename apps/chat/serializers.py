@@ -1,6 +1,8 @@
+from drf_spectacular.utils import extend_schema_field
 from rest_framework import serializers
 
 from .models import Conversation, Message
+from core.schema import UserMiniSerializer
 
 
 class MessageSerializer(serializers.ModelSerializer):
@@ -12,6 +14,7 @@ class MessageSerializer(serializers.ModelSerializer):
         fields = ['id', 'conversation', 'sender', 'sender_phone', 'text', 'image', 'is_read', 'created_at']
         read_only_fields = ['conversation', 'sender', 'sender_phone', 'is_read', 'created_at']
 
+    @extend_schema_field(UserMiniSerializer)
     def get_sender(self, obj):
         try:
             full_name = obj.sender.profile.full_name or obj.sender.phone
@@ -29,15 +32,23 @@ class ConversationSerializer(serializers.ModelSerializer):
         fields = ['id', 'listing', 'deal', 'participant_phones', 'last_message', 'created_at', 'updated_at']
         read_only_fields = fields
 
+    @extend_schema_field(MessageSerializer(allow_null=True))
     def get_last_message(self, obj):
         message = obj.messages.order_by('-created_at').first()
         if not message:
             return None
         return MessageSerializer(message, context=self.context).data
 
+    @extend_schema_field(serializers.ListField(child=serializers.CharField()))
     def get_participant_phones(self, obj):
         return list(obj.participants.values_list('phone', flat=True))
 
 
 class ConversationCreateSerializer(serializers.Serializer):
     deal_id = serializers.IntegerField()
+
+
+class ConversationReadResponseSerializer(serializers.Serializer):
+    """Ответ POST /chat/conversations/{id}/read/."""
+    detail = serializers.CharField()
+    updated = serializers.IntegerField(help_text='Сколько сообщений помечено прочитанными.')

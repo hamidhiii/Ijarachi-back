@@ -6,6 +6,9 @@ from mptt.models import MPTTModel, TreeForeignKey
 
 class Category(MPTTModel):
     name = models.CharField('Название', max_length=100)
+    # Узбекское название. Пустое значение означает «ещё не переведено» —
+    # клиент в этом случае показывает name.
+    name_uz = models.CharField('Название (uz)', max_length=100, blank=True)
     slug = models.SlugField('Slug', unique=True, max_length=120)
     icon = models.CharField('Иконка', max_length=100, blank=True, help_text='Имя иконки или emoji')
     parent = TreeForeignKey(

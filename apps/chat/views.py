@@ -1,13 +1,39 @@
+from drf_spectacular.utils import extend_schema, extend_schema_view
 from rest_framework import generics, status
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from apps.bookings.models import Booking
+from core.schema import DetailSerializer
 from .models import Conversation, Message
-from .serializers import ConversationCreateSerializer, ConversationSerializer, MessageSerializer
+from .serializers import (
+    ConversationCreateSerializer,
+    ConversationReadResponseSerializer,
+    ConversationSerializer,
+    MessageSerializer,
+)
 
 
+@extend_schema_view(
+    get=extend_schema(
+        responses={200: ConversationSerializer(many=True)},
+        summary='Диалоги пользователя',
+        description='Все диалоги, где вызывающий — участник. Пагинации нет, возвращается полный список.',
+    ),
+    post=extend_schema(
+        request=ConversationCreateSerializer,
+        responses={201: ConversationSerializer, 403: DetailSerializer, 404: DetailSerializer},
+        summary='Открыть диалог по сделке',
+        description=(
+            'Тело: {"deal_id": <id сделки>}. Если диалог по сделке уже есть, возвращается он же. '
+            'Участниками становятся арендатор и владелец.\n\n'
+            '403 — deal_id не передан, вызывающий не участник сделки либо сделка не оплачена '
+            '(разрешены статусы paid, in_progress, returned, completed, disputed). '
+            '404 — сделки нет.'
+        ),
+    ),
+)
 class ConversationListCreateView(APIView):
     permission_classes = [IsAuthenticated]
     PAID_STATUSES = [
@@ -64,6 +90,15 @@ class MessageListView(generics.ListCreateAPIView):
         conversation.save(update_fields=['updated_at'])
 
 
+@extend_schema(
+    request=None,
+    responses={200: ConversationReadResponseSerializer, 404: DetailSerializer},
+    summary='Отметить диалог прочитанным',
+    description=(
+        'Помечает прочитанными входящие сообщения диалога (свои не трогает). '
+        'Тело запроса не нужно. 404 — диалога нет либо вызывающий в нём не участвует.'
+    ),
+)
 class ConversationReadView(APIView):
     permission_classes = [IsAuthenticated]
 

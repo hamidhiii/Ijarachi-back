@@ -2,10 +2,12 @@ from decimal import Decimal
 
 from django.conf import settings
 from django.db.models import Avg
+from drf_spectacular.utils import extend_schema_field
 from rest_framework import serializers
 
 from .models import Booking, BookingPhoto, DealReview
 from apps.catalog.models import Item
+from core.schema import UserMiniSerializer
 
 
 def platform_commission_rate() -> Decimal:
@@ -104,6 +106,36 @@ def _serialize_user_mini(user):
     return {'id': user.id, 'full_name': full_name}
 
 
+# ─── Описание вложенных объектов для OpenAPI ───────────────────────────
+# SerializerMethodField без подсказки типа попадает в схему как string, и клиент
+# вынужден угадывать форму ответа. Каждый вложенный объект описан явно.
+
+class ListingMiniSerializer(serializers.Serializer):
+    """Вещь в карточке сделки."""
+    id = serializers.IntegerField()
+    title = serializers.CharField()
+    image = serializers.URLField(allow_null=True)
+
+
+class ContactSerializer(serializers.Serializer):
+    """Контакт второй стороны; null, пока сделка не оплачена."""
+    phone = serializers.CharField()
+
+
+class DealPhotosSerializer(serializers.Serializer):
+    """
+    Ссылки на фото сделки, сгруппированные по этапу. Фото с kind=issue сюда
+    не попадают — их видно только в ответе POST /deals/{id}/photos/.
+    """
+    before = serializers.ListField(child=serializers.URLField())
+    after = serializers.ListField(child=serializers.URLField())
+
+
+def public_status_field():
+    """Статус в публичном словаре, который ожидает клиент."""
+    return serializers.ChoiceField(choices=sorted(set(Booking.PUBLIC_STATUS_MAP.values())))
+
+
 class BookingListSerializer(serializers.ModelSerializer):
     listing = serializers.SerializerMethodField()
     owner = serializers.SerializerMethodField()
@@ -125,15 +157,19 @@ class BookingListSerializer(serializers.ModelSerializer):
             'item_id', 'item_title', 'renter_phone', 'days', 'total_price', 'escrow_status',
         ]
 
+    @extend_schema_field(ListingMiniSerializer)
     def get_listing(self, obj):
         return _serialize_listing_mini(obj.item, self.context.get('request'))
 
+    @extend_schema_field(UserMiniSerializer)
     def get_owner(self, obj):
         return _serialize_user_mini(obj.item.owner)
 
+    @extend_schema_field(UserMiniSerializer)
     def get_renter(self, obj):
         return _serialize_user_mini(obj.renter)
 
+    @extend_schema_field(public_status_field())
     def get_status(self, obj):
         return obj.public_status
 
@@ -174,18 +210,23 @@ class BookingDetailSerializer(serializers.ModelSerializer):
             'escrow_amount',
         ]
 
+    @extend_schema_field(ListingMiniSerializer)
     def get_listing(self, obj):
         return _serialize_listing_mini(obj.item, self.context.get('request'))
 
+    @extend_schema_field(UserMiniSerializer)
     def get_owner(self, obj):
         return _serialize_user_mini(obj.item.owner)
 
+    @extend_schema_field(UserMiniSerializer)
     def get_renter(self, obj):
         return _serialize_user_mini(obj.renter)
 
+    @extend_schema_field(public_status_field())
     def get_status(self, obj):
         return obj.public_status
 
+    @extend_schema_field(DealPhotosSerializer)
     def get_photos(self, obj):
         request = self.context.get('request')
         photos = obj.photos.all()
@@ -203,6 +244,7 @@ class BookingDetailSerializer(serializers.ModelSerializer):
     def get_progress_owner(self, obj) -> str:
         return obj.progress_for('owner')
 
+    @extend_schema_field(ContactSerializer(allow_null=True))
     def get_owner_contact(self, obj):
         request = self.context.get('request')
         user = getattr(request, 'user', None)
@@ -232,10 +274,12 @@ class BookingDetailSerializer(serializers.ModelSerializer):
             'longitude': obj.item.longitude,
         }
 
+    @extend_schema_field(serializers.CharField(allow_null=True))
     def get_owner_phone(self, obj):
         contact = self.get_owner_contact(obj)
         return contact['phone'] if contact else None
 
+    @extend_schema_field(ContactSerializer(allow_null=True))
     def get_renter_contact(self, obj):
         request = self.context.get('request')
         user = getattr(request, 'user', None)

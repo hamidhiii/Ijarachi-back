@@ -13,15 +13,15 @@ class CategorySerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Category
-        fields = ['id', 'name', 'slug', 'icon', 'listings_count']
+        fields = ['id', 'name', 'name_uz', 'slug', 'icon', 'listings_count']
 
 
 class CategoryMiniSerializer(serializers.ModelSerializer):
-    """Вложенная категория внутри Listing: {id, name}."""
+    """Вложенная категория внутри Listing: {id, name, name_uz}."""
 
     class Meta:
         model = Category
-        fields = ['id', 'name']
+        fields = ['id', 'name', 'name_uz']
 
 
 # ─── Item Images ──────────────────────────────────────────────────────────────

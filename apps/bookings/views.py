@@ -3,6 +3,8 @@ import logging
 from django.conf import settings
 from django.db import transaction
 from django.utils import timezone
+from drf_spectacular.types import OpenApiTypes
+from drf_spectacular.utils import OpenApiParameter, extend_schema, extend_schema_view
 from rest_framework import generics, permissions, status
 from rest_framework.parsers import FormParser, MultiPartParser
 from rest_framework.response import Response
@@ -21,8 +23,23 @@ from .serializers import (
     refresh_user_rating,
 )
 from apps.catalog.models import ItemAvailability
+from core.schema import DetailSerializer
 
 logger = logging.getLogger('apps.bookings')
+
+# Какие сделки возвращать: где пользователь арендатор или где он владелец вещи.
+ROLE_PARAMETER = OpenApiParameter(
+    name='role',
+    type=OpenApiTypes.STR,
+    location=OpenApiParameter.QUERY,
+    required=False,
+    default='renter',
+    enum=['renter', 'owner'],
+    description=(
+        'renter — сделки, где пользователь арендатор (значение по умолчанию); '
+        'owner — где он владелец вещи. Любое другое значение трактуется как renter.'
+    ),
+)
 
 
 def user_is_kyc_verified(user) -> bool:
@@ -42,10 +59,21 @@ def verification_required_response():
     )
 
 
+@extend_schema_view(
+    get=extend_schema(
+        parameters=[ROLE_PARAMETER],
+        responses={200: BookingListSerializer(many=True)},
+    ),
+    post=extend_schema(
+        request=BookingCreateSerializer,
+        responses={201: BookingDetailSerializer, 403: DetailSerializer},
+    ),
+)
 class DealCreateView(generics.ListCreateAPIView):
     """
-    POST /api/v1/deals/
-    Creates a draft deal. Dates are locked when payment is started.
+    GET  /api/v1/deals/?role=renter|owner — список сделок пользователя.
+    POST /api/v1/deals/ — черновик сделки; даты фиксируются при начале оплаты.
+    403 — если не пройден KYC.
     """
     permission_classes = [permissions.IsAuthenticated]
     serializer_class = BookingCreateSerializer
@@ -111,9 +139,10 @@ class BookingCreateView(generics.CreateAPIView):
         return Response(BookingDetailSerializer(booking, context={'request': request}).data, status=status.HTTP_201_CREATED)
 
 
+@extend_schema(parameters=[ROLE_PARAMETER], responses={200: BookingListSerializer(many=True)})
 class MyDealsView(generics.ListAPIView):
     """
-    GET /api/v1/deals/?role=renter|owner
+    GET /api/v1/deals/list/?role=renter|owner
     """
     permission_classes = [permissions.IsAuthenticated]
     serializer_class = BookingListSerializer
@@ -126,6 +155,7 @@ class MyDealsView(generics.ListAPIView):
         return qs.filter(renter=self.request.user)
 
 
+@extend_schema(parameters=[ROLE_PARAMETER], responses={200: BookingListSerializer(many=True)})
 class MyRentalsView(MyDealsView):
     """
     Backward compatible GET /api/v1/my-rentals/.
@@ -249,6 +279,24 @@ class DisputeView(APIView):
         return Response(BookingDetailSerializer(deal, context={'request': request}).data)
 
 
+@extend_schema(
+    request=DealReviewSerializer,
+    responses={
+        201: DealReviewSerializer,
+        400: DetailSerializer,
+        403: DetailSerializer,
+        404: DetailSerializer,
+    },
+    summary='Отзыв по сделке',
+    description=(
+        'Клиент присылает только rating (1-5) и comment. Адресат отзыва (reviewee) и автор '
+        '(reviewer) выводятся сервером из сделки: арендатор оценивает владельца и наоборот, '
+        'переданные в теле reviewer/reviewee игнорируются.\n\n'
+        '403 — вызывающий не арендатор и не владелец сделки. '
+        '400 — сделка не в статусе completed/returned либо отзыв уже оставлен. '
+        '404 — сделки нет.'
+    ),
+)
 class DealReviewView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
@@ -278,6 +326,23 @@ class DealReviewView(APIView):
         return Response(DealReviewSerializer(review, context={'request': request}).data, status=status.HTTP_201_CREATED)
 
 
+@extend_schema(
+    request={'multipart/form-data': BookingPhotoSerializer},
+    responses={
+        201: BookingPhotoSerializer,
+        400: DetailSerializer,
+        403: DetailSerializer,
+        404: DetailSerializer,
+    },
+    summary='Загрузка фото по сделке',
+    description=(
+        'multipart/form-data. Поля: image (файл, обязателен), kind (before | after | issue), '
+        'comment (текст, необязателен). booking и uploaded_by проставляет сервер.\n\n'
+        '403 — вызывающий не участник сделки либо сделка ещё не оплачена '
+        '(разрешены статусы paid, in_progress, returned, completed, disputed). '
+        '404 — сделки нет.'
+    ),
+)
 class BookingPhotoUploadView(APIView):
     permission_classes = [permissions.IsAuthenticated]
     parser_classes = [MultiPartParser, FormParser]
