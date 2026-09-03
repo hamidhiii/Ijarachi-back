@@ -71,6 +71,11 @@ class ConversationListCreateView(APIView):
             conversation = Conversation.objects.create(deal=deal)
         conversation.participants.add(deal.renter, deal.item.owner)
 
+        conversation = (
+            Conversation.objects
+            .prefetch_related('participants', 'messages')
+            .get(pk=conversation.pk)
+        )
         return Response(ConversationSerializer(conversation, context={'request': request}).data, status=status.HTTP_201_CREATED)
 
 

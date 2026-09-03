@@ -122,18 +122,48 @@ class ContactSerializer(serializers.Serializer):
     phone = serializers.CharField()
 
 
-class DealPhotosSerializer(serializers.Serializer):
+class DealPhotoSerializer(serializers.ModelSerializer):
     """
-    Ссылки на фото сделки, сгруппированные по этапу. Фото с kind=issue сюда
-    не попадают — их видно только в ответе POST /deals/{id}/photos/.
+    Снимок фотопротокола в карточке сделки. uploaded_at и uploaded_by ставит
+    сервер — клиентскому времени в доказательстве места нет.
     """
-    before = serializers.ListField(child=serializers.URLField())
-    after = serializers.ListField(child=serializers.URLField())
+    url = serializers.SerializerMethodField()
+    uploaded_at = serializers.DateTimeField(source='created_at', read_only=True)
+    uploaded_by = serializers.SerializerMethodField()
+
+    class Meta:
+        model = BookingPhoto
+        fields = ['id', 'url', 'kind', 'uploaded_at', 'uploaded_by', 'comment']
+
+    @extend_schema_field(serializers.URLField())
+    def get_url(self, obj):
+        request = self.context.get('request')
+        return request.build_absolute_uri(obj.image.url) if request else obj.image.url
+
+    @extend_schema_field(UserMiniSerializer)
+    def get_uploaded_by(self, obj):
+        return _serialize_user_mini(obj.uploaded_by)
 
 
 def public_status_field():
     """Статус в публичном словаре, который ожидает клиент."""
     return serializers.ChoiceField(choices=sorted(set(Booking.PUBLIC_STATUS_MAP.values())))
+
+
+def _viewer_role(booking, request):
+    """С какой стороны сделки смотрит вызывающий; None — если он вообще не сторона."""
+    user = getattr(request, 'user', None)
+    if user is None or not user.is_authenticated:
+        return None
+    if user == booking.renter:
+        return 'renter'
+    if user == booking.item.owner:
+        return 'owner'
+    return None
+
+
+def viewer_role_field():
+    return serializers.ChoiceField(choices=['owner', 'renter'], allow_null=True)
 
 
 class BookingListSerializer(serializers.ModelSerializer):
@@ -142,6 +172,9 @@ class BookingListSerializer(serializers.ModelSerializer):
     renter = serializers.SerializerMethodField()
     amount = serializers.DecimalField(source='total_price', max_digits=12, decimal_places=0, read_only=True)
     status = serializers.SerializerMethodField()
+    viewer_role = serializers.SerializerMethodField()
+    photos_before_count = serializers.SerializerMethodField()
+    photos_after_count = serializers.SerializerMethodField()
 
     # Дополнительные поля для обратной совместимости с мобильным клиентом.
     item_title = serializers.CharField(source='item.title', read_only=True)
@@ -153,7 +186,7 @@ class BookingListSerializer(serializers.ModelSerializer):
         model = Booking
         fields = [
             'id', 'listing', 'owner', 'renter', 'start_date', 'end_date',
-            'amount', 'status', 'created_at',
+            'amount', 'status', 'viewer_role', 'photos_before_count', 'photos_after_count', 'created_at',
             'item_id', 'item_title', 'renter_phone', 'days', 'total_price', 'escrow_status',
         ]
 
@@ -173,6 +206,24 @@ class BookingListSerializer(serializers.ModelSerializer):
     def get_status(self, obj):
         return obj.public_status
 
+    @extend_schema_field(viewer_role_field())
+    def get_viewer_role(self, obj):
+        return _viewer_role(obj, self.context.get('request'))
+
+    @extend_schema_field(serializers.IntegerField())
+    def get_photos_before_count(self, obj):
+        return self._count_photos(obj, BookingPhoto.KIND_BEFORE)
+
+    @extend_schema_field(serializers.IntegerField())
+    def get_photos_after_count(self, obj):
+        return self._count_photos(obj, BookingPhoto.KIND_AFTER)
+
+    @staticmethod
+    def _count_photos(booking, kind):
+        # Считаем в питоне по prefetch_related('photos'), чтобы не ловить
+        # по два запроса на каждую строку списка.
+        return sum(1 for photo in booking.photos.all() if photo.kind == kind)
+
 
 class BookingDetailSerializer(serializers.ModelSerializer):
     listing = serializers.SerializerMethodField()
@@ -180,6 +231,7 @@ class BookingDetailSerializer(serializers.ModelSerializer):
     renter = serializers.SerializerMethodField()
     amount = serializers.DecimalField(source='total_price', max_digits=12, decimal_places=0, read_only=True)
     status = serializers.SerializerMethodField()
+    viewer_role = serializers.SerializerMethodField()
     photos = serializers.SerializerMethodField()
 
     days = serializers.IntegerField(read_only=True)
@@ -194,7 +246,7 @@ class BookingDetailSerializer(serializers.ModelSerializer):
         model = Booking
         fields = [
             'id', 'listing', 'owner', 'renter', 'start_date', 'end_date',
-            'amount', 'status', 'photos', 'created_at',
+            'amount', 'status', 'viewer_role', 'photos', 'created_at',
             # Дополнительные поля для обратной совместимости с мобильным клиентом.
             'item', 'item_title', 'owner_phone', 'owner_contact', 'renter_contact',
             'days', 'price_per_day', 'deposit_amount', 'commission_amount', 'total_price',
@@ -226,17 +278,15 @@ class BookingDetailSerializer(serializers.ModelSerializer):
     def get_status(self, obj):
         return obj.public_status
 
-    @extend_schema_field(DealPhotosSerializer)
-    def get_photos(self, obj):
-        request = self.context.get('request')
-        photos = obj.photos.all()
+    @extend_schema_field(viewer_role_field())
+    def get_viewer_role(self, obj):
+        return _viewer_role(obj, self.context.get('request'))
 
-        def urls_for(kind):
-            return [
-                (request.build_absolute_uri(p.image.url) if request else p.image.url)
-                for p in photos if p.kind == kind
-            ]
-        return {'before': urls_for('before'), 'after': urls_for('after')}
+    @extend_schema_field(DealPhotoSerializer(many=True))
+    def get_photos(self, obj):
+        # Плоский список, а не словарь before/after: фото с kind=issue иначе
+        # никуда не попадали, а клиенту нужны автор и серверное время каждого.
+        return DealPhotoSerializer(obj.photos.all(), many=True, context=self.context).data
 
     def get_progress_renter(self, obj) -> str:
         return obj.progress_for('renter')
@@ -310,7 +360,13 @@ class BookingStatusUpdateSerializer(serializers.Serializer):
         (Booking.STATUS_RETURNED, 'owner'): [Booking.STATUS_COMPLETED],
     }
 
-    status = serializers.CharField()
+    # Публичный словарь плюс внутренние значения, которые эндпоинт принимает
+    # ради обратной совместимости. Клиенту следует слать публичные.
+    status = serializers.ChoiceField(
+        choices=sorted(
+            set(Booking.PUBLIC_STATUS_INPUT_MAP) | {code for code, _ in Booking.STATUS_CHOICES}
+        )
+    )
 
     def validate_status(self, raw_status):
         # Клиент присылает статус в публичном словаре (pending/confirmed/active/...),

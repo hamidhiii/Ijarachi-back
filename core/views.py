@@ -61,7 +61,7 @@ class AdminDashboardView(APIView):
 
         deals_qs = (
             Booking.objects.select_related('item__owner', 'renter')
-            .prefetch_related('item__images')
+            .prefetch_related('item__images', 'photos')
             .order_by('-created_at')[:DASHBOARD_LIST_LIMIT]
         )
         deals = BookingListSerializer(deals_qs, many=True, context={'request': request}).data

@@ -26,10 +26,15 @@ class MessageSerializer(serializers.ModelSerializer):
 class ConversationSerializer(serializers.ModelSerializer):
     last_message = serializers.SerializerMethodField()
     participant_phones = serializers.SerializerMethodField()
+    interlocutor = serializers.SerializerMethodField()
+    unread_count = serializers.SerializerMethodField()
 
     class Meta:
         model = Conversation
-        fields = ['id', 'listing', 'deal', 'participant_phones', 'last_message', 'created_at', 'updated_at']
+        fields = [
+            'id', 'listing', 'deal', 'interlocutor', 'unread_count',
+            'participant_phones', 'last_message', 'created_at', 'updated_at',
+        ]
         read_only_fields = fields
 
     @extend_schema_field(MessageSerializer(allow_null=True))
@@ -42,6 +47,30 @@ class ConversationSerializer(serializers.ModelSerializer):
     @extend_schema_field(serializers.ListField(child=serializers.CharField()))
     def get_participant_phones(self, obj):
         return list(obj.participants.values_list('phone', flat=True))
+
+    @extend_schema_field(UserMiniSerializer(allow_null=True))
+    def get_interlocutor(self, obj):
+        """Второй участник диалога; null, если запрос без пользователя."""
+        user = getattr(self.context.get('request'), 'user', None)
+        if user is None or not user.is_authenticated:
+            return None
+        other = next((p for p in obj.participants.all() if p.pk != user.pk), None)
+        if other is None:
+            return None
+        try:
+            full_name = other.profile.full_name or other.phone
+        except Exception:
+            full_name = other.phone
+        return {'id': other.pk, 'full_name': full_name}
+
+    @extend_schema_field(serializers.IntegerField())
+    def get_unread_count(self, obj):
+        """Непрочитанные входящие: свои сообщения не считаются."""
+        user = getattr(self.context.get('request'), 'user', None)
+        if user is None or not user.is_authenticated:
+            return 0
+        # Считаем по prefetch_related('messages') из вьюхи, без запроса на строку.
+        return sum(1 for m in obj.messages.all() if not m.is_read and m.sender_id != user.pk)
 
 
 class ConversationCreateSerializer(serializers.Serializer):

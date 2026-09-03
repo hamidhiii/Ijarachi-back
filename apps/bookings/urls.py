@@ -12,6 +12,8 @@ from .views import (
     DealReviewView,
     DisputeView,
     MyDealsView,
+    MyReviewsView,
+    UserReviewsView,
 )
 
 urlpatterns = [
@@ -29,4 +31,9 @@ urlpatterns = [
     path('bookings/<int:pk>/', BookingDetailView.as_view(), name='booking-detail'),
     path('bookings/<int:pk>/status/', BookingStatusUpdateView.as_view(), name='booking-status'),
     path('my-rentals/', MyRentalsView.as_view(), name='my-rentals'),
+
+    # Репутация человека, а не объявления: отзывы об арендаторе висят на чужих
+    # объявлениях и иначе не читаются ниоткуда.
+    path('users/<int:pk>/reviews/', UserReviewsView.as_view(), name='user-reviews'),
+    path('profile/reviews/', MyReviewsView.as_view(), name='my-reviews'),
 ]

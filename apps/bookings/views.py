@@ -10,7 +10,7 @@ from rest_framework.parsers import FormParser, MultiPartParser
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from .models import Booking
+from .models import Booking, DealReview
 from .serializers import (
     BookingCreateSerializer,
     BookingDetailSerializer,
@@ -85,7 +85,7 @@ class DealCreateView(generics.ListCreateAPIView):
 
     def get_queryset(self):
         role = self.request.query_params.get('role', 'renter')
-        qs = Booking.objects.select_related('item__owner', 'renter').prefetch_related('item__images')
+        qs = Booking.objects.select_related('item__owner', 'renter').prefetch_related('item__images', 'photos')
         if role == 'owner':
             return qs.filter(item__owner=self.request.user)
         return qs.filter(renter=self.request.user)
@@ -149,7 +149,7 @@ class MyDealsView(generics.ListAPIView):
 
     def get_queryset(self):
         role = self.request.query_params.get('role', 'renter')
-        qs = Booking.objects.select_related('item__owner', 'renter').prefetch_related('item__images')
+        qs = Booking.objects.select_related('item__owner', 'renter').prefetch_related('item__images', 'photos')
         if role == 'owner':
             return qs.filter(item__owner=self.request.user)
         return qs.filter(renter=self.request.user)
@@ -237,6 +237,18 @@ class DealPayView(APIView):
         }, status=status.HTTP_201_CREATED)
 
 
+@extend_schema(
+    request=None,
+    responses={200: BookingDetailSerializer, 400: DetailSerializer, 404: DetailSerializer},
+    summary='Арендатор подтверждает возврат',
+    description=(
+        'Тело не нужно. Переводит сделку из in_progress (active) в returned и ставит '
+        'серверный returned_at. Фото при возврате не требуется.\n\n'
+        'Вызвать может только арендатор этой сделки: для всех остальных, включая владельца, '
+        'сделка просто не находится — 404, не 403. 400 — сделка не в статусе in_progress. '
+        'В ответе полная карточка сделки.'
+    ),
+)
 class ConfirmReturnView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
@@ -372,6 +384,27 @@ class BookingPhotoUploadView(APIView):
         return Response(BookingPhotoSerializer(photo, context={'request': request}).data, status=status.HTTP_201_CREATED)
 
 
+@extend_schema(
+    request=BookingStatusUpdateSerializer,
+    responses={200: BookingDetailSerializer, 400: DetailSerializer, 404: DetailSerializer},
+    summary='Смена статуса сделки',
+    description=(
+        'Тело: {"status": "<новый статус>"}. Принимаются и публичные значения '
+        '(pending, confirmed, active, returned, completed, cancelled, disputed), и внутренние '
+        '(draft, pending_payment, paid, in_progress, ...) — публичные предпочтительны.\n\n'
+        'Разрешённые переходы (из статуса + кем):\n'
+        '- draft, pending_payment → cancelled: арендатор\n'
+        '- paid (confirmed) → in_progress (active): арендатор или владелец\n'
+        '- paid (confirmed) → cancelled: арендатор\n'
+        '- in_progress (active) → returned: только арендатор\n'
+        '- in_progress (active) → disputed: арендатор или владелец\n'
+        '- returned → completed: только владелец\n\n'
+        'Перехода в paid (confirmed) нет ни у кого: сделка становится оплаченной по вебхуку '
+        'провайдера, а не этим эндпоинтом. Сотрудник (is_staff) может поставить любой статус.\n\n'
+        'Фото при выдаче для перехода в active не требуется. Любой другой переход, как и вызов '
+        'посторонним, отклоняется с 400 и текстом причины в ошибках поля status.'
+    ),
+)
 class BookingStatusUpdateView(APIView):
     """
     PATCH /api/v1/deals/{id}/status/ and legacy /bookings/{id}/status/.
@@ -432,3 +465,46 @@ class BookingStatusUpdateView(APIView):
         booking.escrow_status = Booking.ESCROW_REFUNDED
         booking.save(update_fields=['escrow_status', 'updated_at'])
         logger.info('Booking #%s cancelled - payment refunded', booking.pk)
+
+
+# Маршруты /users/{id}/reviews/ и /profile/reviews/ объявлены в этом приложении,
+# потому что здесь живёт модель DealReview.
+
+@extend_schema(
+    responses={200: DealReviewSerializer(many=True)},
+    summary='Отзывы о пользователе',
+    description=(
+        'Отзывы, где человек — адресат (reviewee), независимо от того, чьё объявление. '
+        'id в пути — ключ пользователя: тот же, что /profile/ отдаёт как id и что стоит '
+        'в DealReview.reviewee.'
+    ),
+)
+class UserReviewsView(generics.ListAPIView):
+    permission_classes = [permissions.AllowAny]
+    serializer_class = DealReviewSerializer
+    # Пустой queryset нужен, чтобы drf-spectacular видел модель: get_queryset
+    # опирается на kwargs и при генерации схемы падал бы.
+    queryset = DealReview.objects.none()
+
+    def reviews_for(self, user_id):
+        return (
+            DealReview.objects
+            .filter(reviewee_id=user_id)
+            .select_related('reviewer__profile', 'reviewee__profile', 'booking', 'listing')
+            .order_by('-created_at')
+        )
+
+    def get_queryset(self):
+        return self.reviews_for(self.kwargs['pk'])
+
+
+@extend_schema(
+    responses={200: DealReviewSerializer(many=True)},
+    summary='Отзывы обо мне',
+    description='То же самое для текущего пользователя, без подстановки своего id.',
+)
+class MyReviewsView(UserReviewsView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get_queryset(self):
+        return self.reviews_for(self.request.user.pk)
