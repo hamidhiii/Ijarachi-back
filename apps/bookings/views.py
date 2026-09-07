@@ -97,6 +97,10 @@ class DealCreateView(generics.ListCreateAPIView):
         serializer.is_valid(raise_exception=True)
         deal = serializer.save()
         logger.info('Deal #%s draft created: item=%s renter=%s', deal.pk, deal.item_id, request.user.phone)
+
+        from apps.bookings.tasks import notify_owner_new_booking
+        notify_owner_new_booking.delay(deal.pk)
+
         return Response(BookingDetailSerializer(deal, context={'request': request}).data, status=status.HTTP_201_CREATED)
 
 
@@ -136,6 +140,10 @@ class BookingCreateView(generics.CreateAPIView):
             'Booking #%s created: item=%s renter=%s dates=%s to %s total=%s',
             booking.pk, item.pk, request.user.phone, start, end, booking.total_price,
         )
+
+        from apps.bookings.tasks import notify_owner_new_booking
+        notify_owner_new_booking.delay(booking.pk)
+
         return Response(BookingDetailSerializer(booking, context={'request': request}).data, status=status.HTTP_201_CREATED)
 
 

@@ -7,19 +7,47 @@ logger = logging.getLogger('apps.bookings')
 
 @shared_task(bind=True, max_retries=3, default_retry_delay=60)
 def notify_owner_new_booking(self, booking_id: int):
-    """Notify item owner about a new booking request."""
+    """
+    Уведомляет владельца о новом запросе аренды: запись в Notification
+    (попадает в список /notifications/ и в счётчик непрочитанных), плюс
+    пуш в Telegram-бот, если владелец уже привязал номер (тот же бот,
+    что доставляет OTP) — в интерфейсе ответ может подождать, а в
+    Telegram у владельца больше шансов увидеть запрос вовремя.
+    """
     try:
         from apps.bookings.models import Booking
-        booking = Booking.objects.select_related('item__owner', 'renter').get(pk=booking_id)
+        from apps.notifications.models import Notification
+        from apps.notifications.tasks import create_notification
+        from apps.users.telegram_bot import get_telegram_link, send_telegram_message
+
+        booking = Booking.objects.select_related('item__owner', 'renter__profile').get(pk=booking_id)
         owner = booking.item.owner
-        message = (
-            f'Rentoo: новый запрос на аренду "{booking.item.title}" '
-            f'от {booking.renter.phone}. '
-            f'Даты: {booking.start_date} — {booking.end_date}.'
-        )
-        logger.info('Notifying owner %s for booking #%s', owner.phone, booking_id)
-        from apps.users.sms import send_sms
-        send_sms(owner.phone, message)
+
+        try:
+            renter_name = booking.renter.profile.full_name or booking.renter.phone
+        except Exception:
+            renter_name = booking.renter.phone
+
+        create_notification(owner, Notification.TYPE_DEAL, {
+            'title': 'Новый запрос аренды',
+            'message': (
+                f'{renter_name} хочет арендовать «{booking.item.title}» '
+                f'с {booking.start_date} по {booking.end_date}.'
+            ),
+            'booking_id': booking.pk,
+        })
+        logger.info('Deal notification created for owner=%s booking=#%s', owner.phone, booking_id)
+
+        link = get_telegram_link(owner.phone)
+        if link:
+            text = (
+                f'🔔 Rentoo: новый запрос аренды «{booking.item.title}» от {renter_name}.\n'
+                f'Даты: {booking.start_date} — {booking.end_date}.\n'
+                f'Пожалуйста, ответьте как можно скорее в приложении.'
+            )
+            send_telegram_message(link.chat_id, text)
+        else:
+            logger.info('Owner %s has no Telegram link, skipping push for booking #%s', owner.phone, booking_id)
     except Exception as exc:
         logger.error('notify_owner_new_booking failed: %s', exc)
         raise self.retry(exc=exc)
