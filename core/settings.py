@@ -29,6 +29,19 @@ if config('USE_X_FORWARDED_PROTO', default=False, cast=bool):
     SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
     SESSION_COOKIE_SECURE = True
     CSRF_COOKIE_SECURE = True
+    # Django checks the (trusted, see above) X-Forwarded-Proto before redirecting,
+    # so this is a no-op when nginx already forces https — just defense-in-depth.
+    SECURE_SSL_REDIRECT = True
+    # HSTS — браузер сам откажется ходить по http на этот домен целый год.
+    # Безопасно только когда HTTPS гарантированно всегда доступен (см. выше).
+    SECURE_HSTS_SECONDS = config('SECURE_HSTS_SECONDS', default=31536000, cast=int)
+    SECURE_HSTS_INCLUDE_SUBDOMAINS = True
+    SECURE_HSTS_PRELOAD = True
+
+# Базовые заголовки безопасности — не зависят от TLS-терминации, включены всегда.
+SECURE_CONTENT_TYPE_NOSNIFF = True
+CSRF_COOKIE_HTTPONLY = True
+X_FRAME_OPTIONS = 'DENY'
 
 # ─── Apps ────────────────────────────────────────────────────────────────────
 
@@ -131,9 +144,17 @@ REST_FRAMEWORK = {
     'DEFAULT_PAGINATION_CLASS': 'rest_framework.pagination.PageNumberPagination',
     'PAGE_SIZE': 20,
     'DEFAULT_THROTTLE_CLASSES': (
+        # AnonRateThrottle/UserRateThrottle apply to every view as a baseline
+        # (views without throttle_scope had NO rate limit at all otherwise —
+        # e.g. GET /listings/, /categories/). ScopedRateThrottle layers extra,
+        # stricter limits on top for sensitive endpoints (sms, auth, kyc, payments).
+        'rest_framework.throttling.AnonRateThrottle',
+        'rest_framework.throttling.UserRateThrottle',
         'rest_framework.throttling.ScopedRateThrottle',
     ),
     'DEFAULT_THROTTLE_RATES': {
+        'anon': config('THROTTLE_RATE_ANON', default='60/min'),
+        'user': config('THROTTLE_RATE_USER', default='300/min'),
         'auth': '10/min',
         'sms': '5/min',
         'payments': '20/min',
