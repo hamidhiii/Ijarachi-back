@@ -32,6 +32,7 @@ class ItemAdmin(admin.ModelAdmin):
         ('Основное', {'fields': ('owner', 'category', 'title', 'description', 'condition', 'status')}),
         ('Цена', {'fields': ('price_per_day', 'deposit')}),
         ('Локация', {'fields': ('city', 'address', 'latitude', 'longitude')}),
+        ('Характеристики', {'fields': ('attributes',)}),
         ('Даты', {'fields': ('created_at', 'updated_at')}),
     )
 

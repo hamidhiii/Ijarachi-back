@@ -301,6 +301,12 @@ KYC_LIVENESS_EAR_DELTA = config('KYC_LIVENESS_EAR_DELTA', default=0.05, cast=flo
 # Минимальное относительное смещение центра лица между кадрами (к ширине лица), чтобы засчитать поворот головы
 KYC_LIVENESS_MOVEMENT_RATIO = config('KYC_LIVENESS_MOVEMENT_RATIO', default=0.08, cast=float)
 
+# ─── Chat ─────────────────────────────────────────────────────────────────────
+
+# Сколько открытых диалогов-обращений (без привязанной сделки) может держать
+# один пользователь одновременно — защита от спама через POST /chat/conversations/.
+CHAT_MAX_OPEN_INQUIRIES = config('CHAT_MAX_OPEN_INQUIRIES', default=20, cast=int)
+
 
 # ─── Payment Providers ────────────────────────────────────────────────────────
 

@@ -11,6 +11,10 @@ class Category(MPTTModel):
     name_uz = models.CharField('Название (uz)', max_length=100, blank=True)
     slug = models.SlugField('Slug', unique=True, max_length=120)
     icon = models.CharField('Иконка', max_length=100, blank=True, help_text='Имя иконки или emoji')
+    # Определения полей формы размещения для этой категории:
+    # [{"key": "size", "label": "Размер", "type": "text|number|select|chips", "options": [...], "unit": "..."}]
+    # options обязателен для select/chips, unit опционален. Читает фронт, чтобы строить форму динамически.
+    attributes = models.JSONField('Характеристики категории', default=list, blank=True)
     parent = TreeForeignKey(
         'self',
         on_delete=models.CASCADE,
@@ -86,6 +90,10 @@ class Item(models.Model):
     view_count = models.PositiveIntegerField(default=0)
     favorite_count = models.PositiveIntegerField(default=0)
     min_rental_days = models.PositiveIntegerField(default=1)
+    # Значения характеристик, специфичных для категории (см. Category.attributes),
+    # напр. {"size": ["42","44"], "height": 170}. Только скаляры (str/number) и
+    # списки строк — не вложенные объекты. PATCH заменяет объект целиком.
+    attributes = models.JSONField('Характеристики', default=dict, blank=True)
 
     # Location
     address = models.CharField('Адрес', max_length=300)

@@ -74,7 +74,18 @@ class ConversationSerializer(serializers.ModelSerializer):
 
 
 class ConversationCreateSerializer(serializers.Serializer):
-    deal_id = serializers.IntegerField()
+    """
+    {"deal_id": ...} — открыть/получить диалог по оплаченной сделке (старый флоу).
+    {"listing_id": ...} — открыть/получить диалог-обращение по объявлению до брони.
+    Ровно одно из двух полей.
+    """
+    deal_id = serializers.IntegerField(required=False)
+    listing_id = serializers.IntegerField(required=False)
+
+    def validate(self, attrs):
+        if bool(attrs.get('deal_id')) == bool(attrs.get('listing_id')):
+            raise serializers.ValidationError('Укажите ровно одно из полей: deal_id или listing_id.')
+        return attrs
 
 
 class ConversationReadResponseSerializer(serializers.Serializer):

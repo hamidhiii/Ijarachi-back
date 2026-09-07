@@ -13,15 +13,15 @@ class CategorySerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Category
-        fields = ['id', 'name', 'name_uz', 'slug', 'icon', 'listings_count']
+        fields = ['id', 'name', 'name_uz', 'slug', 'icon', 'listings_count', 'attributes']
 
 
 class CategoryMiniSerializer(serializers.ModelSerializer):
-    """Вложенная категория внутри Listing: {id, name, name_uz}."""
+    """Вложенная категория внутри Listing: {id, name, name_uz, slug}."""
 
     class Meta:
         model = Category
-        fields = ['id', 'name', 'name_uz']
+        fields = ['id', 'name', 'name_uz', 'slug']
 
 
 # ─── Item Images ──────────────────────────────────────────────────────────────
@@ -46,6 +46,26 @@ class ItemImageUploadSerializer(serializers.ModelSerializer):
 
 
 # ─── Item ─────────────────────────────────────────────────────────────────────
+
+def validate_item_attributes(value):
+    """
+    Характеристики объявления — только скаляры (строка/число) и списки строк,
+    без вложенных объектов (см. backend-integration: "attributes" contract).
+    """
+    if not isinstance(value, dict):
+        raise serializers.ValidationError('attributes должен быть объектом.')
+    for key, val in value.items():
+        if not isinstance(key, str):
+            raise serializers.ValidationError('Ключи attributes должны быть строками.')
+        if isinstance(val, bool) or val is None:
+            raise serializers.ValidationError(f'"{key}": допустимы только строка, число или список строк.')
+        if isinstance(val, (str, int, float)):
+            continue
+        if isinstance(val, list) and all(isinstance(item, str) for item in val):
+            continue
+        raise serializers.ValidationError(f'"{key}": допустимы только строка, число или список строк.')
+    return value
+
 
 def _serialize_owner(item, request):
     try:
@@ -75,7 +95,7 @@ class ItemListSerializer(serializers.ModelSerializer):
             'id', 'title', 'description', 'category',
             'price_per_day', 'deposit', 'condition',
             'address', 'city', 'latitude', 'longitude', 'min_rental_days',
-            'status', 'images', 'owner', 'rating', 'reviews_count',
+            'status', 'images', 'attributes', 'owner', 'rating', 'reviews_count',
             'view_count', 'favorite_count', 'is_favorite', 'created_at',
         ]
 
@@ -113,7 +133,7 @@ class ItemDetailSerializer(serializers.ModelSerializer):
         fields = [
             'id', 'title', 'description', 'price_per_day', 'deposit',
             'condition', 'status', 'city', 'address', 'latitude', 'longitude',
-            'category', 'images', 'blocked_dates', 'owner', 'created_at',
+            'category', 'images', 'attributes', 'blocked_dates', 'owner', 'created_at',
             'view_count', 'favorite_count', 'min_rental_days',
             'is_favorite', 'rating', 'reviews_count',
         ]
@@ -144,12 +164,15 @@ class ItemDetailSerializer(serializers.ModelSerializer):
 
 
 class ItemCreateSerializer(serializers.ModelSerializer):
+    attributes = serializers.JSONField(required=False, default=dict)
+
     class Meta:
         model = Item
         fields = [
             'title', 'description', 'category',
             'price_per_day', 'deposit', 'condition',
             'address', 'city', 'latitude', 'longitude', 'min_rental_days',
+            'attributes',
         ]
 
     def validate_price_per_day(self, value):
@@ -162,6 +185,9 @@ class ItemCreateSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError('Залог не может быть отрицательным.')
         return value
 
+    def validate_attributes(self, value):
+        return validate_item_attributes(value)
+
     def create(self, validated_data):
         user = self.context['request'].user
         item = Item.objects.create(owner=user, status=Item.STATUS_PENDING, **validated_data)
@@ -171,13 +197,19 @@ class ItemCreateSerializer(serializers.ModelSerializer):
 
 
 class ItemUpdateSerializer(serializers.ModelSerializer):
+    attributes = serializers.JSONField(required=False)
+
     class Meta:
         model = Item
         fields = [
             'title', 'description', 'category',
             'price_per_day', 'deposit', 'condition',
             'address', 'city', 'latitude', 'longitude', 'min_rental_days', 'status',
+            'attributes',
         ]
+
+    def validate_attributes(self, value):
+        return validate_item_attributes(value)
 
     def validate_status(self, value):
         request = self.context.get('request')

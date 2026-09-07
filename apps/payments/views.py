@@ -48,7 +48,17 @@ def finalize_paid_payment(payment: Payment):
 
         conversation = Conversation.objects.filter(deal=booking).first()
         if not conversation:
-            conversation = Conversation.objects.create(deal=booking)
+            # Тот же арендатор мог уже написать владельцу по этому объявлению до
+            # брони — переиспользуем этот диалог вместо создания второго рядом,
+            # просто проставляя ему deal_id задним числом.
+            conversation = Conversation.objects.filter(
+                listing=booking.item, participants=booking.renter, deal__isnull=True,
+            ).first()
+        if not conversation:
+            conversation = Conversation.objects.create(deal=booking, listing=booking.item)
+        elif not conversation.deal_id:
+            conversation.deal = booking
+            conversation.save(update_fields=['deal', 'updated_at'])
         conversation.participants.add(booking.renter, booking.item.owner)
         payload = {'booking_id': booking.pk, 'message': 'Чат по сделке открыт'}
         create_notification(booking.renter, Notification.TYPE_CHAT, payload)
