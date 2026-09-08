@@ -40,6 +40,17 @@ def get_verification_status(user) -> dict:
     """
     from ..models import PassportDocument, FaceVerification, KYCDocument
 
+    # Профиль, помеченный проверенным (в том числе вручную сотрудником), — это и
+    # есть ответ. Без этой ветки /profile/ говорил «личность подтверждена», а
+    # /users/me/verification/ отвечал none, и экраны противоречили друг другу.
+    profile = getattr(user, 'profile', None)
+    if profile is not None and profile.is_verified_kyc:
+        return {
+            'status': 'approved',
+            'rejection_reason': None,
+            'reviewed_at': profile.kyc_verified_at,
+        }
+
     face = FaceVerification.objects.filter(user=user).first()
     if face and face.status == FaceVerification.STATUS_PASSED:
         return {'status': 'approved', 'rejection_reason': None, 'reviewed_at': face.verified_at}

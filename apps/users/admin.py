@@ -54,9 +54,11 @@ class KYCDocumentAdmin(admin.ModelAdmin):
         from .models import Profile
         queryset.update(status=KYCDocument.STATUS_APPROVED, reviewed_at=timezone.now())
         for kyc in queryset:
-            Profile.objects.filter(user=kyc.user).update(
-                verification_status=Profile.VERIFICATION_VERIFIED
-            )
+            profile, _ = Profile.objects.get_or_create(user=kyc.user)
+            # mark_kyc_verified ставит флаг, дату и статус разом. Прежний
+            # bulk-update менял только статус, и профиль оказывался проверенным
+            # без даты проверки — а флаг is_verified_kyc вовсе не поднимался.
+            profile.mark_kyc_verified()
     approve.short_description = 'Одобрить выбранные KYC'
 
     def reject(self, request, queryset):

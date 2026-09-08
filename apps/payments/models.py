@@ -5,10 +5,12 @@ from django.conf import settings
 class Payment(models.Model):
     PROVIDER_PAYME = 'payme'
     PROVIDER_CLICK = 'click'
+    PROVIDER_CASH = 'cash'
 
     PROVIDER_CHOICES = [
         (PROVIDER_PAYME, 'Payme'),
         (PROVIDER_CLICK, 'Click'),
+        (PROVIDER_CASH, 'Наличными при получении'),
     ]
 
     STATUS_PENDING = 'pending'

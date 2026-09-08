@@ -60,6 +60,9 @@ class Booking(models.Model):
     ESCROW_RELEASED = 'released'
     ESCROW_REFUNDED = 'refunded'
     ESCROW_FROZEN = 'frozen'
+    # Расчёт наличными при получении: платформа ничего не удерживает, поэтому
+    # «ожидает удержания» было бы неправдой — эскроу к сделке неприменим.
+    ESCROW_NONE = 'none'
 
     ESCROW_CHOICES = [
         (ESCROW_PENDING, 'Pending'),
@@ -67,6 +70,7 @@ class Booking(models.Model):
         (ESCROW_RELEASED, 'Released'),
         (ESCROW_REFUNDED, 'Refunded'),
         (ESCROW_FROZEN, 'Frozen'),
+        (ESCROW_NONE, 'Без эскроу (наличные)'),
     ]
 
     # Progress label per status for each role (used by mobile)

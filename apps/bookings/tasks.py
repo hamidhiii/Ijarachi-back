@@ -92,6 +92,19 @@ def release_escrow(self, booking_id: int):
         from django.db import transaction as db_transaction
 
         booking = Booking.objects.select_related('item__owner__profile').get(pk=booking_id)
+
+        cash_payment = Payment.objects.filter(booking=booking, provider=Payment.PROVIDER_CASH).first()
+        if cash_payment:
+            # Наличные владелец получил из рук в руки: платформа их не держала и
+            # не выплачивает. Комиссия по таким сделкам автоматически не удерживается.
+            cash_payment.status = Payment.STATUS_COMPLETED
+            cash_payment.save(update_fields=['status', 'updated_at'])
+            booking.status = Booking.STATUS_COMPLETED
+            booking.escrow_status = Booking.ESCROW_NONE
+            booking.save(update_fields=['status', 'escrow_status', 'updated_at'])
+            logger.info('Booking #%s settled in cash, no payout from escrow', booking_id)
+            return
+
         payment = Payment.objects.filter(
             booking=booking,
             status=Payment.STATUS_PAID,
@@ -137,3 +150,41 @@ def release_escrow(self, booking_id: int):
     except Exception as exc:
         logger.error('release_escrow failed for booking #%s: %s', booking_id, exc)
         raise self.retry(exc=exc)
+
+
+@shared_task(bind=True, max_retries=3, default_retry_delay=300)
+def expire_stale_bookings(self):
+    """
+    Отменяет заявки, которые никто не подтвердил и не оплатил дольше
+    BOOKING_ABANDON_TIMEOUT_HOURS, и освобождает даты в календаре: без этого
+    неотвеченная заявка держит чужую вещь занятой бесконечно.
+    """
+    from datetime import timedelta
+
+    from django.utils import timezone
+
+    from apps.bookings.models import Booking
+    from apps.catalog.models import ItemAvailability
+
+    limit = timezone.now() - timedelta(hours=settings.BOOKING_ABANDON_TIMEOUT_HOURS)
+    stale = Booking.objects.filter(
+        status__in=[Booking.STATUS_DRAFT, Booking.STATUS_PENDING_PAYMENT],
+        updated_at__lt=limit,
+    ).select_related('item')
+
+    expired = 0
+    for booking in stale:
+        try:
+            avail = ItemAvailability.objects.get(item=booking.item)
+            avail.unblock_range(booking.start_date, booking.end_date)
+        except ItemAvailability.DoesNotExist:
+            pass
+        booking.transition_to(Booking.STATUS_CANCELLED)
+        expired += 1
+
+    if expired:
+        logger.info(
+            'Expired %s bookings untouched for more than %sh',
+            expired, settings.BOOKING_ABANDON_TIMEOUT_HOURS,
+        )
+    return expired

@@ -137,10 +137,16 @@ def failed_payments():
 def hanging_payments():
     from apps.payments.models import Payment
 
+    from apps.bookings.models import Booking
+
     limit = timezone.now() - timedelta(hours=settings.MONITOR_PAYMENT_PENDING_HOURS)
     queryset = (
         Payment.objects
+        # Наличные висят в pending всю аренду по замыслу, а у отменённой сделки
+        # незакрытый платёж — не инцидент. Ни то, ни другое не про вебхуки.
         .filter(status=Payment.STATUS_PENDING, created_at__lt=limit)
+        .exclude(provider=Payment.PROVIDER_CASH)
+        .exclude(booking__status=Booking.STATUS_CANCELLED)
         .select_related('booking')
         .order_by('created_at')
     )

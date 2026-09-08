@@ -43,13 +43,25 @@ class ConversationCreateGateTests(APITestCase):
         )
         self.url = reverse('chat-conversations')
 
-    def test_listing_based_chat_creation_is_blocked(self):
+    def test_listing_based_chat_opens_before_any_deal(self):
+        # Вопрос по объявлению задают до брони, поэтому диалог по listing_id
+        # оплатой не гейтится — в отличие от диалога по сделке.
         self.client.force_authenticate(self.renter)
 
         response = self.client.post(self.url, {'listing_id': self.item.pk}, format='json')
 
-        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
-        self.assertEqual(response.data['detail'], 'Чат открывается после оплаты сделки')
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(response.data['listing'], self.item.pk)
+        self.assertIsNone(response.data['deal'])
+
+    def test_listing_based_chat_is_idempotent(self):
+        self.client.force_authenticate(self.renter)
+
+        first = self.client.post(self.url, {'listing_id': self.item.pk}, format='json')
+        second = self.client.post(self.url, {'listing_id': self.item.pk}, format='json')
+
+        self.assertEqual(second.status_code, status.HTTP_200_OK)
+        self.assertEqual(second.data['id'], first.data['id'])
 
     def test_deal_chat_creation_is_blocked_before_payment(self):
         self.client.force_authenticate(self.renter)

@@ -6,11 +6,12 @@ from django.utils import timezone
 from drf_spectacular.types import OpenApiTypes
 from drf_spectacular.utils import OpenApiParameter, extend_schema, extend_schema_view
 from rest_framework import generics, permissions, status
+from rest_framework.exceptions import ValidationError
 from rest_framework.parsers import FormParser, MultiPartParser
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from .models import Booking, DealReview
+from .models import Booking, BookingPhoto, DealReview
 from .serializers import (
     BookingCreateSerializer,
     BookingDetailSerializer,
@@ -18,9 +19,11 @@ from .serializers import (
     BookingPhotoSerializer,
     BookingStatusUpdateSerializer,
     DealReviewSerializer,
+    DealPayResponseSerializer,
     DealPaySerializer,
     DisputeSerializer,
     refresh_user_rating,
+    require_handover_photo,
 )
 from apps.catalog.models import ItemAvailability
 from core.schema import DetailSerializer
@@ -189,6 +192,26 @@ class BookingDetailView(DealDetailView):
     """
 
 
+@extend_schema(
+    request=DealPaySerializer,
+    responses={
+        201: DealPayResponseSerializer,
+        400: DetailSerializer,
+        403: DetailSerializer,
+        404: DetailSerializer,
+        409: DetailSerializer,
+    },
+    summary='Выбрать способ оплаты сделки',
+    description=(
+        'Тело: {"provider": "payme" | "click" | "cash"}. Блокирует даты в календаре и '
+        'переводит сделку в pending_payment.\n\n'
+        'payme и click возвращают redirect_url; сделка станет confirmed по вебхуку провайдера.\n'
+        'cash — расчёт при получении: redirect_url отсутствует, эскроу неприменим, '
+        'из ожидания сделку выводит владелец переходом в confirmed.\n\n'
+        '403 — не пройден KYC. 400 — сделку в этом статусе оплатить нельзя. '
+        '409 — даты успели занять. 404 — сделки нет либо вызывающий не арендатор.'
+    ),
+)
 class DealPayView(APIView):
     permission_classes = [permissions.IsAuthenticated]
     throttle_scope = 'payments'
@@ -221,16 +244,21 @@ class DealPayView(APIView):
 
             from apps.payments.models import Payment
 
-            scheme = settings.APP_DEEPLINK_SCHEME
             payment = Payment.objects.create(
                 booking=deal,
                 provider=provider,
                 amount=deal.total_price * 100,
                 status=Payment.STATUS_PENDING,
-                payment_url=f'{scheme}://pay/{provider}?deal_id={deal.pk}',
             )
-            payment.payment_url = f'{scheme}://pay/{provider}?deal_id={deal.pk}&payment_id={payment.pk}'
-            payment.save(update_fields=['payment_url'])
+            if provider == Payment.PROVIDER_CASH:
+                # Наличными при получении: вести некуда, платформа денег не держит,
+                # поэтому эскроу к сделке неприменим с самого начала.
+                deal.escrow_status = Booking.ESCROW_NONE
+                deal.save(update_fields=['escrow_status', 'updated_at'])
+            else:
+                scheme = settings.APP_DEEPLINK_SCHEME
+                payment.payment_url = f'{scheme}://pay/{provider}?deal_id={deal.pk}&payment_id={payment.pk}'
+                payment.save(update_fields=['payment_url'])
 
         from apps.users.tasks import charge_kyc_first_deal_cost
         charge_kyc_first_deal_cost.delay(request.user.pk, deal.pk)
@@ -238,7 +266,8 @@ class DealPayView(APIView):
         return Response({
             'payment_id': payment.pk,
             'provider': payment.provider,
-            'redirect_url': payment.payment_url,
+            'status': payment.status,
+            'redirect_url': payment.payment_url or None,
             # Доп. поля для обратной совместимости с мобильным клиентом.
             'deal_id': deal.pk,
             'amount': payment.amount,
@@ -251,7 +280,7 @@ class DealPayView(APIView):
     summary='Арендатор подтверждает возврат',
     description=(
         'Тело не нужно. Переводит сделку из in_progress (active) в returned и ставит '
-        'серверный returned_at. Фото при возврате не требуется.\n\n'
+        'серверный returned_at. Требует хотя бы один снимок kind=after — без него 400.\n\n'
         'Вызвать может только арендатор этой сделки: для всех остальных, включая владельца, '
         'сделка просто не находится — 404, не 403. 400 — сделка не в статусе in_progress. '
         'В ответе полная карточка сделки.'
@@ -268,6 +297,12 @@ class ConfirmReturnView(APIView):
 
         if deal.status != Booking.STATUS_IN_PROGRESS:
             return Response({'detail': 'Возврат можно подтвердить только для активной сделки.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            require_handover_photo(deal, Booking.STATUS_RETURNED)
+        except ValidationError as exc:
+            return Response({'detail': exc.detail[0] if isinstance(exc.detail, list) else exc.detail},
+                            status=status.HTTP_400_BAD_REQUEST)
 
         deal.status = Booking.STATUS_RETURNED
         deal.returned_at = timezone.now()
@@ -357,7 +392,13 @@ class DealReviewView(APIView):
     summary='Загрузка фото по сделке',
     description=(
         'multipart/form-data. Поля: image (файл, обязателен), kind (before | after | issue), '
-        'comment (текст, необязателен). booking и uploaded_by проставляет сервер.\n\n'
+        'comment (текст, необязателен). booking, uploaded_by и время проставляет сервер.\n\n'
+        'Каждый вид снимка принимается только в своём окне, иначе 400:\n'
+        '- before — только пока сделка в paid (confirmed), то есть до выдачи вещи;\n'
+        '- after — с in_progress (active) и далее: returned, disputed;\n'
+        '- issue — в любом статусе, где загрузка вообще разрешена.\n\n'
+        'Окна нужны, чтобы снимок «при выдаче» нельзя было добавить задним числом, уже после '
+        'порчи вещи.\n\n'
         '403 — вызывающий не участник сделки либо сделка ещё не оплачена '
         '(разрешены статусы paid, in_progress, returned, completed, disputed). '
         '404 — сделки нет.'
@@ -375,6 +416,18 @@ class BookingPhotoUploadView(APIView):
         Booking.STATUS_DISPUTED,
     ]
 
+    # В каком статусе какой снимок имеет смысл. Без этого «фото при выдаче»
+    # можно загрузить уже после порчи вещи, и оно перестаёт быть доказательством.
+    KIND_WINDOWS = {
+        BookingPhoto.KIND_BEFORE: [Booking.STATUS_PAID],
+        BookingPhoto.KIND_AFTER: [
+            Booking.STATUS_IN_PROGRESS,
+            Booking.STATUS_RETURNED,
+            Booking.STATUS_DISPUTED,
+        ],
+        BookingPhoto.KIND_ISSUE: ALLOWED_STATUSES,
+    }
+
     def post(self, request, pk):
         try:
             deal = Booking.objects.select_related('item__owner', 'renter').get(pk=pk)
@@ -388,6 +441,14 @@ class BookingPhotoUploadView(APIView):
 
         serializer = BookingPhotoSerializer(data=request.data, context={'request': request})
         serializer.is_valid(raise_exception=True)
+
+        kind = serializer.validated_data['kind']
+        if deal.status not in self.KIND_WINDOWS.get(kind, []):
+            return Response(
+                {'detail': f'Снимок «{kind}» нельзя добавить к сделке в статусе "{deal.status}".'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
         photo = serializer.save(booking=deal, uploaded_by=request.user)
         return Response(BookingPhotoSerializer(photo, context={'request': request}).data, status=status.HTTP_201_CREATED)
 
@@ -401,16 +462,20 @@ class BookingPhotoUploadView(APIView):
         '(pending, confirmed, active, returned, completed, cancelled, disputed), и внутренние '
         '(draft, pending_payment, paid, in_progress, ...) — публичные предпочтительны.\n\n'
         'Разрешённые переходы (из статуса + кем):\n'
-        '- draft, pending_payment → cancelled: арендатор\n'
+        '- draft, pending_payment → cancelled: арендатор или владелец\n'
+        '- pending_payment → paid (confirmed): только владелец — так бронь с расчётом '
+        'наличными выходит из ожидания. У payme и click это делает вебхук провайдера, '
+        'и вручную такой переход не нужен.\n'
         '- paid (confirmed) → in_progress (active): арендатор или владелец\n'
         '- paid (confirmed) → cancelled: арендатор\n'
         '- in_progress (active) → returned: только арендатор\n'
         '- in_progress (active) → disputed: арендатор или владелец\n'
         '- returned → completed: только владелец\n\n'
-        'Перехода в paid (confirmed) нет ни у кого: сделка становится оплаченной по вебхуку '
-        'провайдера, а не этим эндпоинтом. Сотрудник (is_staff) может поставить любой статус.\n\n'
-        'Фото при выдаче для перехода в active не требуется. Любой другой переход, как и вызов '
-        'посторонним, отклоняется с 400 и текстом причины в ошибках поля status.'
+        'Фотопротокол обязателен: в active не пустят без снимка kind=before, в returned — '
+        'без kind=after (отключается настройкой BOOKING_REQUIRE_HANDOVER_PHOTO). '
+        'Сотрудник (is_staff) может поставить любой статус и не связан этими правилами.\n\n'
+        'Любой другой переход, как и вызов посторонним, отклоняется с 400 и текстом причины '
+        'в ошибках поля status.'
     ),
 )
 class BookingStatusUpdateView(APIView):
@@ -443,11 +508,29 @@ class BookingStatusUpdateView(APIView):
             elif new_status == Booking.STATUS_RETURNED:
                 booking.returned_at = timezone.now()
                 booking.save(update_fields=['returned_at', 'updated_at'])
+            elif new_status == Booking.STATUS_PAID:
+                self._confirm_without_provider(booking)
             elif new_status == Booking.STATUS_COMPLETED:
                 from apps.bookings.tasks import release_escrow
                 release_escrow.delay(booking.pk)
 
         return Response(BookingDetailSerializer(booking, context={'request': request}).data)
+
+    def _confirm_without_provider(self, booking):
+        """
+        Владелец принял бронь с расчётом наличными. Денег платформа не получала,
+        поэтому эскроу остаётся неприменимым, а платёж — pending: он закроется,
+        когда сделка дойдёт до completed. Контакты раскрываем: сторонам встречаться.
+        """
+        from apps.payments.models import Payment
+
+        if booking.payments.filter(provider=Payment.PROVIDER_CASH).exists():
+            booking.escrow_status = Booking.ESCROW_NONE
+
+        if booking.contact_revealed_at is None:
+            booking.contact_revealed_at = timezone.now()
+        booking.save(update_fields=['escrow_status', 'contact_revealed_at', 'updated_at'])
+        logger.info('Booking #%s confirmed by owner without provider payment', booking.pk)
 
     def _handle_cancellation(self, booking):
         try:
@@ -458,8 +541,13 @@ class BookingStatusUpdateView(APIView):
 
         from apps.payments.models import Payment, Transaction
 
-        paid_payments = list(booking.payments.filter(status=Payment.STATUS_PAID))
-        booking.payments.filter(status=Payment.STATUS_PAID).update(status=Payment.STATUS_REFUNDED)
+        # Наличные платформа не принимала — возвращать нечего, иначе в отчётности
+        # появится движение денег, которого не было.
+        cash_only = not booking.payments.exclude(provider=Payment.PROVIDER_CASH).exists()
+        paid_payments = list(booking.payments.filter(status=Payment.STATUS_PAID).exclude(provider=Payment.PROVIDER_CASH))
+        booking.payments.filter(status=Payment.STATUS_PAID).exclude(provider=Payment.PROVIDER_CASH).update(
+            status=Payment.STATUS_REFUNDED
+        )
         for payment in paid_payments:
             Transaction.objects.create(
                 booking=booking,
@@ -470,9 +558,9 @@ class BookingStatusUpdateView(APIView):
                 currency='UZS',
                 metadata={'source': 'deal_cancelled'},
             )
-        booking.escrow_status = Booking.ESCROW_REFUNDED
+        booking.escrow_status = Booking.ESCROW_NONE if cash_only else Booking.ESCROW_REFUNDED
         booking.save(update_fields=['escrow_status', 'updated_at'])
-        logger.info('Booking #%s cancelled - payment refunded', booking.pk)
+        logger.info('Booking #%s cancelled (cash_only=%s)', booking.pk, cash_only)
 
 
 # Маршруты /users/{id}/reviews/ и /profile/reviews/ объявлены в этом приложении,

@@ -348,11 +348,43 @@ class BookingDetailSerializer(serializers.ModelSerializer):
         return {'phone': obj.renter.phone}
 
 
+def require_handover_photo(booking, new_status):
+    """
+    Фотопротокол — единственное доказательство в сделке без залога, поэтому
+    снимок при выдаче и при возврате обязателен на сервере, а не только в UI.
+    Отключается BOOKING_REQUIRE_HANDOVER_PHOTO, сотрудников не касается.
+    """
+    if not settings.BOOKING_REQUIRE_HANDOVER_PHOTO:
+        return
+
+    required = {
+        Booking.STATUS_IN_PROGRESS: (
+            BookingPhoto.KIND_BEFORE,
+            'Перед началом аренды загрузите хотя бы одно фото «при выдаче».',
+        ),
+        Booking.STATUS_RETURNED: (
+            BookingPhoto.KIND_AFTER,
+            'Перед подтверждением возврата загрузите хотя бы одно фото «при возврате».',
+        ),
+    }.get(new_status)
+    if not required:
+        return
+
+    kind, message = required
+    if not booking.photos.filter(kind=kind).exists():
+        raise serializers.ValidationError(message)
+
+
 class BookingStatusUpdateSerializer(serializers.Serializer):
     """Status transitions based on role."""
     ALLOWED_TRANSITIONS = {
         (Booking.STATUS_DRAFT, 'renter'): [Booking.STATUS_CANCELLED],
         (Booking.STATUS_PENDING_PAYMENT, 'renter'): [Booking.STATUS_CANCELLED],
+        # Оплата наличными при получении: провайдера в сделке нет, поэтому из
+        # ожидания её выводит владелец — принимает бронь или отказывает. Иначе
+        # сделка не выходит из pending никогда, а календарь блокируется молчанием.
+        (Booking.STATUS_DRAFT, 'owner'): [Booking.STATUS_CANCELLED],
+        (Booking.STATUS_PENDING_PAYMENT, 'owner'): [Booking.STATUS_PAID, Booking.STATUS_CANCELLED],
         (Booking.STATUS_PAID, 'renter'): [Booking.STATUS_CANCELLED, Booking.STATUS_IN_PROGRESS],
         (Booking.STATUS_PAID, 'owner'): [Booking.STATUS_IN_PROGRESS],
         (Booking.STATUS_IN_PROGRESS, 'renter'): [Booking.STATUS_RETURNED, Booking.STATUS_DISPUTED],
@@ -389,6 +421,8 @@ class BookingStatusUpdateSerializer(serializers.Serializer):
             raise serializers.ValidationError(
                 f'Переход из "{booking.status}" в "{new_status}" не разрешён.'
             )
+        if role != 'admin':
+            require_handover_photo(booking, new_status)
         return new_status
 
     def _resolve_role(self, booking, user):
@@ -402,7 +436,20 @@ class BookingStatusUpdateSerializer(serializers.Serializer):
 
 
 class DealPaySerializer(serializers.Serializer):
-    provider = serializers.ChoiceField(choices=['click', 'payme'])
+    provider = serializers.ChoiceField(choices=['click', 'payme', 'cash'])
+
+
+class DealPayResponseSerializer(serializers.Serializer):
+    """Ответ POST /deals/{id}/pay/."""
+    payment_id = serializers.IntegerField()
+    provider = serializers.CharField()
+    status = serializers.CharField(help_text='pending — ждём вебхук провайдера; paid — для cash, сразу.')
+    redirect_url = serializers.URLField(
+        required=False, allow_null=True,
+        help_text='Ссылка на страницу провайдера. Отсутствует у provider=cash.',
+    )
+    deal_id = serializers.IntegerField()
+    amount = serializers.IntegerField(help_text='Сумма в тийинах (сум × 100).')
 
 
 class DisputeSerializer(serializers.Serializer):
