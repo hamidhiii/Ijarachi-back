@@ -177,6 +177,10 @@ SIMPLE_JWT = {
     'ROTATE_REFRESH_TOKENS': True,
     'BLACKLIST_AFTER_ROTATION': True,
     'AUTH_HEADER_TYPES': ('Bearer',),
+    # Домен закрыт nginx-ом статическим Basic Auth (Authorization: Basic ...) —
+    # один HTTP-заголовок не может нести два разных Authorization-значения
+    # одновременно, поэтому JWT переехал на свой заголовок: X-Auth-Token.
+    'AUTH_HEADER_NAME': 'HTTP_X_AUTH_TOKEN',
     'SIGNING_KEY': config('JWT_SIGNING_KEY', default=SECRET_KEY),
 }
 
