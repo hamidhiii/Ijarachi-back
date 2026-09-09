@@ -25,15 +25,23 @@ CSRF_TRUSTED_ORIGINS = [
 
 # Включать только если nginx сам выставляет X-Forwarded-Proto и не пропускает его
 # от клиента: иначе любой сможет выдать http-запрос за https.
+#
+# Без этого Django считает каждый запрос обычным http (TLS терминируется на
+# nginx, до приложения долетает голый http) — из-за этого request.build_absolute_uri()
+# на всех media-ссылках (фото объявлений, аватары, KYC-документы и т.д.) отдаёт
+# http://..., хотя сайт целиком открывается по https. Именно это отдельно от
+# HSTS/редиректа ниже: доверие заголовку для генерации ссылок безопасно включать
+# сразу, как только подтверждено, что nginx сам проставляет X-Forwarded-Proto.
 if config('USE_X_FORWARDED_PROTO', default=False, cast=bool):
     SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
     SESSION_COOKIE_SECURE = True
     CSRF_COOKIE_SECURE = True
-    # Django checks the (trusted, see above) X-Forwarded-Proto before redirecting,
-    # so this is a no-op when nginx already forces https — just defense-in-depth.
+
+# Принудительный HTTPS-редирект и HSTS — отдельный флаг, осознанно не включён по
+# умолчанию даже при доверии заголовку выше: HSTS на год — необратимое для
+# браузера решение, включать явным решением, а не заодно с прокси-хедером.
+if config('ENABLE_HSTS', default=False, cast=bool):
     SECURE_SSL_REDIRECT = True
-    # HSTS — браузер сам откажется ходить по http на этот домен целый год.
-    # Безопасно только когда HTTPS гарантированно всегда доступен (см. выше).
     SECURE_HSTS_SECONDS = config('SECURE_HSTS_SECONDS', default=31536000, cast=int)
     SECURE_HSTS_INCLUDE_SUBDOMAINS = True
     SECURE_HSTS_PRELOAD = True
