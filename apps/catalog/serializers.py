@@ -1,7 +1,9 @@
+from drf_spectacular.utils import extend_schema_field
 from rest_framework import serializers
 from django.utils.dateparse import parse_date
 
 from .models import Category, Favorite, Item, ItemImage, ItemAvailability
+from core.schema import OwnerMiniSerializer
 
 
 class CategorySerializer(serializers.ModelSerializer):
@@ -34,6 +36,7 @@ class ItemImageSerializer(serializers.ModelSerializer):
         fields = ['id', 'url', 'is_primary', 'order']
         read_only_fields = ['id']
 
+    @extend_schema_field(serializers.URLField())
     def get_url(self, obj):
         request = self.context.get('request')
         return request.build_absolute_uri(obj.image.url) if request else obj.image.url
@@ -94,22 +97,26 @@ class ItemListSerializer(serializers.ModelSerializer):
         fields = [
             'id', 'title', 'description', 'category',
             'price_per_day', 'deposit', 'condition',
-            'address', 'city', 'latitude', 'longitude', 'min_rental_days',
+            'address', 'city', 'district', 'latitude', 'longitude', 'min_rental_days',
             'status', 'images', 'attributes', 'owner', 'rating', 'reviews_count',
             'view_count', 'favorite_count', 'is_favorite', 'created_at',
         ]
 
+    @extend_schema_field(OwnerMiniSerializer)
     def get_owner(self, obj):
         return _serialize_owner(obj, self.context.get('request'))
 
+    @extend_schema_field(serializers.FloatField())
     def get_rating(self, obj):
         from django.db.models import Avg
         value = obj.reviews.filter(reviewee=obj.owner).aggregate(avg=Avg('rating'))['avg']
         return round(value, 2) if value else 0
 
+    @extend_schema_field(serializers.IntegerField())
     def get_reviews_count(self, obj):
         return obj.reviews.filter(reviewee=obj.owner).count()
 
+    @extend_schema_field(serializers.BooleanField())
     def get_is_favorite(self, obj):
         request = self.context.get('request')
         user = getattr(request, 'user', None)
@@ -132,29 +139,34 @@ class ItemDetailSerializer(serializers.ModelSerializer):
         model = Item
         fields = [
             'id', 'title', 'description', 'price_per_day', 'deposit',
-            'condition', 'status', 'city', 'address', 'latitude', 'longitude',
+            'condition', 'status', 'city', 'district', 'address', 'latitude', 'longitude',
             'category', 'images', 'attributes', 'blocked_dates', 'owner', 'created_at',
             'view_count', 'favorite_count', 'min_rental_days',
             'is_favorite', 'rating', 'reviews_count',
         ]
 
+    @extend_schema_field(serializers.ListField(child=serializers.CharField(), help_text='YYYY-MM-DD'))
     def get_blocked_dates(self, obj):
         try:
             return obj.availability.blocked_dates
         except ItemAvailability.DoesNotExist:
             return []
 
+    @extend_schema_field(OwnerMiniSerializer)
     def get_owner(self, obj):
         return _serialize_owner(obj, self.context.get('request'))
 
+    @extend_schema_field(serializers.FloatField())
     def get_rating(self, obj):
         from django.db.models import Avg
         value = obj.reviews.filter(reviewee=obj.owner).aggregate(avg=Avg('rating'))['avg']
         return round(value, 2) if value else 0
 
+    @extend_schema_field(serializers.IntegerField())
     def get_reviews_count(self, obj):
         return obj.reviews.filter(reviewee=obj.owner).count()
 
+    @extend_schema_field(serializers.BooleanField())
     def get_is_favorite(self, obj):
         request = self.context.get('request')
         user = getattr(request, 'user', None)
@@ -171,7 +183,7 @@ class ItemCreateSerializer(serializers.ModelSerializer):
         fields = [
             'title', 'description', 'category',
             'price_per_day', 'deposit', 'condition',
-            'address', 'city', 'latitude', 'longitude', 'min_rental_days',
+            'address', 'city', 'district', 'latitude', 'longitude', 'min_rental_days',
             'attributes',
         ]
 
@@ -204,7 +216,7 @@ class ItemUpdateSerializer(serializers.ModelSerializer):
         fields = [
             'title', 'description', 'category',
             'price_per_day', 'deposit', 'condition',
-            'address', 'city', 'latitude', 'longitude', 'min_rental_days', 'status',
+            'address', 'city', 'district', 'latitude', 'longitude', 'min_rental_days', 'status',
             'attributes',
         ]
 

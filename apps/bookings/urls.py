@@ -9,6 +9,7 @@ from .views import (
     DealCreateView,
     DealDetailView,
     DealPayView,
+    DealPreviewView,
     DealReviewView,
     DisputeView,
     MyDealsView,
@@ -18,6 +19,7 @@ from .views import (
 
 urlpatterns = [
     path('deals/', DealCreateView.as_view(), name='deal-create'),
+    path('deals/preview/', DealPreviewView.as_view(), name='deal-preview'),
     path('deals/list/', MyDealsView.as_view(), name='deal-list'),
     path('deals/<int:pk>/', DealDetailView.as_view(), name='deal-detail'),
     path('deals/<int:pk>/pay/', DealPayView.as_view(), name='deal-pay'),

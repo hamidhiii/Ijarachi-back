@@ -7,7 +7,7 @@ from drf_spectacular.views import (
     SpectacularSwaggerView,
     SpectacularRedocView,
 )
-from .views import AdminDashboardView, AdminFinanceExportView
+from .views import AdminDashboardView, AdminFinanceExportView, AdminUserBlockView
 
 urlpatterns = [
     path('admin/', admin.site.urls),
@@ -24,6 +24,7 @@ urlpatterns = [
     path('api/v1/payments/', include('apps.payments.urls')),
     path('api/v1/admin-api/dashboard/', AdminDashboardView.as_view(), name='admin-dashboard'),
     path('api/v1/admin-api/finance/export/', AdminFinanceExportView.as_view(), name='admin-finance-export'),
+    path('api/v1/admin-api/users/<int:pk>/status/', AdminUserBlockView.as_view(), name='admin-user-status'),
 
     # Docs
     path('api/schema/', SpectacularAPIView.as_view(), name='schema'),

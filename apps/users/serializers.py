@@ -233,6 +233,27 @@ class PassportConfirmSerializer(serializers.Serializer):
         return value
 
 
+class PassportExtractedFieldsSerializer(serializers.Serializer):
+    """Что реально распознал OCR — часть ответа PassportUploadView.post."""
+    series = serializers.CharField(allow_blank=True)
+    number = serializers.CharField(allow_blank=True)
+    pinfl = serializers.CharField(allow_blank=True)
+    full_name = serializers.CharField(allow_blank=True)
+    birth_date = serializers.DateField(allow_null=True)
+    issue_date = serializers.DateField(allow_null=True)
+    expiry_date = serializers.DateField(allow_null=True)
+
+
+class PassportUploadResponseSerializer(serializers.Serializer):
+    """
+    Ответ POST /kyc/passport/upload/. Пустая строка в любом из полей extracted
+    значит «OCR не распознал это поле» — не «ещё обрабатывается»: обработка
+    синхронная, промежуточного статуса нет, ответ всегда финальный (или 4xx).
+    """
+    detail = serializers.CharField()
+    extracted = PassportExtractedFieldsSerializer()
+
+
 class PassportStatusSerializer(serializers.ModelSerializer):
     class Meta:
         model = PassportDocument

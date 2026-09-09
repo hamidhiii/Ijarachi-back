@@ -21,7 +21,10 @@ from .serializers import (
     DealReviewSerializer,
     DealPayResponseSerializer,
     DealPaySerializer,
+    DealPreviewResponseSerializer,
+    DealPreviewSerializer,
     DisputeSerializer,
+    compute_pricing,
     refresh_user_rating,
     require_handover_photo,
 )
@@ -60,6 +63,30 @@ def verification_required_response():
         },
         status=status.HTTP_403_FORBIDDEN,
     )
+
+
+@extend_schema(
+    request=DealPreviewSerializer,
+    responses={200: DealPreviewResponseSerializer, 400: DetailSerializer},
+    summary='Предпросмотр стоимости сделки',
+    description=(
+        'Тело: {"item", "start_date", "end_date"}. Тот же расчёт, что при создании '
+        'сделки (days, price_per_day, deposit, commission_amount, total_price), но '
+        'ничего не создаёт и не проверяет занятость дат — только цена, до отправки '
+        'запроса. Доступен без KYC: это витрина, а не бронирование.\n\n'
+        '400 — объявления нет/оно не approved (стандартная ошибка поля item), '
+        'либо дата начала позже даты конца.'
+    ),
+)
+class DealPreviewView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request):
+        serializer = DealPreviewSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+        pricing = compute_pricing(data['item'], data['start_date'], data['end_date'])
+        return Response(DealPreviewResponseSerializer(pricing).data)
 
 
 @extend_schema_view(
@@ -216,6 +243,13 @@ class DealPayView(APIView):
     permission_classes = [permissions.IsAuthenticated]
     throttle_scope = 'payments'
 
+    # Дальше по статусу однозначно понятно, почему платить нельзя — фронту нужно
+    # различать «уже оплачено» от «сделка закрыта», а не только текст detail.
+    ALREADY_PAID_STATUSES = [
+        Booking.STATUS_PAID, Booking.STATUS_IN_PROGRESS,
+        Booking.STATUS_RETURNED, Booking.STATUS_COMPLETED,
+    ]
+
     def post(self, request, pk):
         if not user_is_kyc_verified(request.user):
             return verification_required_response()
@@ -228,14 +262,24 @@ class DealPayView(APIView):
             try:
                 deal = Booking.objects.select_for_update().select_related('item', 'renter').get(pk=pk, renter=request.user)
             except Booking.DoesNotExist:
-                return Response({'detail': 'Сделка не найдена.'}, status=status.HTTP_404_NOT_FOUND)
+                return Response(
+                    {'code': 'DEAL_NOT_FOUND', 'detail': 'Сделка не найдена.'},
+                    status=status.HTTP_404_NOT_FOUND,
+                )
 
             if deal.status not in [Booking.STATUS_DRAFT, Booking.STATUS_PENDING_PAYMENT]:
-                return Response({'detail': f'Нельзя оплатить сделку в статусе {deal.status}.'}, status=status.HTTP_400_BAD_REQUEST)
+                if deal.status in self.ALREADY_PAID_STATUSES:
+                    code, detail = 'ALREADY_PAID', 'Эта сделка уже оплачена.'
+                else:
+                    code, detail = 'DEAL_CLOSED', f'Сделка в статусе {deal.public_status} больше не оплачивается.'
+                return Response({'code': code, 'detail': detail}, status=status.HTTP_400_BAD_REQUEST)
 
             avail, _ = ItemAvailability.objects.select_for_update().get_or_create(item=deal.item)
             if not avail.is_available(deal.start_date, deal.end_date):
-                return Response({'detail': 'Выбранные даты уже заняты.'}, status=status.HTTP_409_CONFLICT)
+                return Response(
+                    {'code': 'DATES_UNAVAILABLE', 'detail': 'Выбранные даты уже заняты.'},
+                    status=status.HTTP_409_CONFLICT,
+                )
 
             avail.block_range(deal.start_date, deal.end_date)
             deal.status = Booking.STATUS_PENDING_PAYMENT
@@ -243,6 +287,7 @@ class DealPayView(APIView):
             deal.save(update_fields=['status', 'escrow_status', 'updated_at'])
 
             from apps.payments.models import Payment
+            from apps.payments.checkout import build_redirect_url
 
             payment = Payment.objects.create(
                 booking=deal,
@@ -256,8 +301,7 @@ class DealPayView(APIView):
                 deal.escrow_status = Booking.ESCROW_NONE
                 deal.save(update_fields=['escrow_status', 'updated_at'])
             else:
-                scheme = settings.APP_DEEPLINK_SCHEME
-                payment.payment_url = f'{scheme}://pay/{provider}?deal_id={deal.pk}&payment_id={payment.pk}'
+                payment.payment_url = build_redirect_url(payment)
                 payment.save(update_fields=['payment_url'])
 
         from apps.users.tasks import charge_kyc_first_deal_cost

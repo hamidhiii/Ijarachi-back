@@ -3,6 +3,7 @@ from rest_framework import serializers
 
 from .models import Conversation, Message
 from core.schema import UserMiniSerializer
+from apps.bookings.serializers import ListingMiniSerializer, _serialize_listing_mini
 
 
 class MessageSerializer(serializers.ModelSerializer):
@@ -24,6 +25,7 @@ class MessageSerializer(serializers.ModelSerializer):
 
 
 class ConversationSerializer(serializers.ModelSerializer):
+    listing = serializers.SerializerMethodField()
     last_message = serializers.SerializerMethodField()
     participant_phones = serializers.SerializerMethodField()
     interlocutor = serializers.SerializerMethodField()
@@ -36,6 +38,16 @@ class ConversationSerializer(serializers.ModelSerializer):
             'participant_phones', 'last_message', 'created_at', 'updated_at',
         ]
         read_only_fields = fields
+
+    @extend_schema_field(ListingMiniSerializer(allow_null=True))
+    def get_listing(self, obj):
+        """
+        Вещь диалога как объект {id, title, image} — не голый id, чтобы строка
+        диалога могла показать название/фото без похода за самой сделкой.
+        """
+        if obj.listing_id is None:
+            return None
+        return _serialize_listing_mini(obj.listing, self.context.get('request'))
 
     @extend_schema_field(MessageSerializer(allow_null=True))
     def get_last_message(self, obj):

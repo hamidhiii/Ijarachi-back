@@ -98,6 +98,9 @@ class Item(models.Model):
     # Location
     address = models.CharField('Адрес', max_length=300)
     city = models.CharField('Город', max_length=100, default='Ташкент')
+    # Свободная строка, как и city — районов может быть разное число в разных
+    # городах, отдельного справочника пока нет.
+    district = models.CharField('Район', max_length=100, blank=True)
     latitude = models.FloatField('Широта', null=True, blank=True)
     longitude = models.FloatField('Долгота', null=True, blank=True)
 

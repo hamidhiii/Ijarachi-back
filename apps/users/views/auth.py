@@ -3,6 +3,7 @@ from django.conf import settings
 from django.utils import timezone
 from datetime import timedelta
 
+from drf_spectacular.utils import extend_schema
 from rest_framework import status
 from rest_framework.views import APIView
 from rest_framework.response import Response
@@ -168,6 +169,17 @@ class LoginView(VerifyOTPView):
     """Compatibility endpoint for POST /api/v1/auth/login."""
 
 
+@extend_schema(
+    responses={200: VerificationStatusSerializer},
+    summary='Сводный статус верификации личности',
+    description=(
+        'status ∈ {none, review, approved, rejected}. Источник истины единый для этого '
+        'эндпоинта и для verification_status в GET /profile/ — оба читают один и тот же '
+        'признак (см. apps.users.services.kyc.get_verification_status): approved, если '
+        'профиль помечен верифицированным (в т.ч. вручную сотрудником), иначе — по '
+        'факту прохождения паспорт+лицо, иначе — по устаревшему ручному KYC, иначе none.'
+    ),
+)
 class VerificationStatusView(APIView):
     permission_classes = [IsAuthenticated]
 

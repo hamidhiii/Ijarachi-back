@@ -4,14 +4,56 @@ from django.db.models import Sum
 from django.http import HttpResponse
 from django.utils import timezone
 from datetime import timedelta
+from drf_spectacular.types import OpenApiTypes
+from drf_spectacular.utils import extend_schema
+from rest_framework import serializers, status
 from rest_framework.permissions import IsAdminUser
 from rest_framework.response import Response
 from rest_framework.views import APIView
+
+from apps.bookings.serializers import BookingListSerializer
+from core.schema import DetailSerializer
 
 # Сколько последних записей отдавать в списках дашборда (не полная выгрузка).
 DASHBOARD_LIST_LIMIT = 50
 
 
+class DashboardStatSerializer(serializers.Serializer):
+    label = serializers.CharField()
+    value = serializers.CharField()
+    delta = serializers.CharField(allow_null=True)
+
+
+class DashboardUserRowSerializer(serializers.Serializer):
+    id = serializers.IntegerField()
+    name = serializers.CharField()
+    phone = serializers.CharField()
+    verified = serializers.BooleanField()
+    status = serializers.ChoiceField(choices=['active', 'blocked'])
+
+
+class DashboardDisputeRowSerializer(serializers.Serializer):
+    id = serializers.IntegerField()
+    deal_id = serializers.IntegerField()
+    title = serializers.CharField()
+    status = serializers.CharField(help_text='Пока всегда "review" — отдельного ресурса споров нет.')
+    amount = serializers.DecimalField(max_digits=12, decimal_places=0)
+    created_at = serializers.DateTimeField()
+
+
+class AdminDashboardResponseSerializer(serializers.Serializer):
+    """Ответ GET /admin-api/dashboard/."""
+    stats = DashboardStatSerializer(many=True)
+    users = DashboardUserRowSerializer(many=True, help_text=f'Последние {DASHBOARD_LIST_LIMIT} по дате регистрации.')
+    deals = BookingListSerializer(many=True, help_text=f'Последние {DASHBOARD_LIST_LIMIT} по дате создания.')
+    disputes = DashboardDisputeRowSerializer(many=True, help_text=f'Сделки в статусе disputed, последние {DASHBOARD_LIST_LIMIT}.')
+
+
+@extend_schema(
+    responses={200: AdminDashboardResponseSerializer},
+    summary='Сводка для админ-консоли',
+    description='Только для is_staff. Карточки статистики + короткие списки (не полная выгрузка, см. лимиты в help_text полей).',
+)
 class AdminDashboardView(APIView):
     """
     GET /api/v1/admin-api/dashboard/
@@ -22,7 +64,6 @@ class AdminDashboardView(APIView):
 
     def get(self, request):
         from apps.bookings.models import Booking
-        from apps.bookings.serializers import BookingListSerializer
         from apps.payments.models import Payment
         from apps.users.models import CustomUser
 
@@ -88,6 +129,60 @@ class AdminDashboardView(APIView):
         })
 
 
+class AdminUserStatusSerializer(serializers.Serializer):
+    status = serializers.ChoiceField(choices=['active', 'blocked'])
+
+
+@extend_schema(
+    request=AdminUserStatusSerializer,
+    responses={200: DashboardUserRowSerializer, 400: DetailSerializer, 404: DetailSerializer},
+    summary='Заблокировать/разблокировать пользователя',
+    description=(
+        'Тело: {"status": "active" | "blocked"}. Переключает CustomUser.is_active — '
+        'заблокированный пользователь не может авторизоваться (OTP-логин отклоняется), '
+        'уже выданные токены не отзываются отдельно. Только для is_staff; заблокировать '
+        'самого себя нельзя (400).'
+    ),
+)
+class AdminUserBlockView(APIView):
+    permission_classes = [IsAdminUser]
+
+    def patch(self, request, pk):
+        from apps.users.models import CustomUser
+
+        if int(pk) == request.user.pk:
+            return Response(
+                {'detail': 'Нельзя заблокировать собственный аккаунт.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        try:
+            user = CustomUser.objects.select_related('profile').get(pk=pk)
+        except CustomUser.DoesNotExist:
+            return Response({'detail': 'Пользователь не найден.'}, status=status.HTTP_404_NOT_FOUND)
+
+        serializer = AdminUserStatusSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        user.is_active = serializer.validated_data['status'] == 'active'
+        user.save(update_fields=['is_active'])
+
+        return Response({
+            'id': user.id,
+            'name': getattr(getattr(user, 'profile', None), 'full_name', '') or user.phone,
+            'phone': user.phone,
+            'verified': bool(getattr(getattr(user, 'profile', None), 'is_verified_kyc', False)),
+            'status': 'active' if user.is_active else 'blocked',
+        })
+
+
+@extend_schema(
+    responses={200: OpenApiTypes.BINARY},
+    summary='Экспорт транзакций в CSV',
+    description=(
+        'Content-Type: text/csv, Content-Disposition: attachment. Не JSON. '
+        'Колонки: id, type, user_phone, deal_id, amount, currency, created_at. '
+        'Полная выгрузка Transaction без пагинации и лимита.'
+    ),
+)
 class AdminFinanceExportView(APIView):
     permission_classes = [IsAdminUser]
 

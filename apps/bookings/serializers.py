@@ -14,6 +14,24 @@ def platform_commission_rate() -> Decimal:
     return Decimal(str(settings.PLATFORM_COMMISSION_PERCENT)) / Decimal('100')
 
 
+def compute_pricing(item, start, end) -> dict:
+    """
+    Общий расчёт стоимости — используется и при создании сделки, и в
+    POST /deals/preview/ (тот же результат до создания объекта).
+    """
+    days = (end - start).days + 1
+    rental_cost = item.price_per_day * days
+    commission = (rental_cost * platform_commission_rate()).quantize(Decimal('1'))
+    total = rental_cost + commission + item.deposit
+    return {
+        'days': days,
+        'price_per_day': item.price_per_day,
+        'deposit': item.deposit,
+        'commission_amount': commission,
+        'total_price': total,
+    }
+
+
 class BookingCreateSerializer(serializers.ModelSerializer):
     class Meta:
         model = Booking
@@ -50,11 +68,7 @@ class BookingCreateSerializer(serializers.ModelSerializer):
         item = validated_data['item']
         start = validated_data['start_date']
         end = validated_data['end_date']
-        days = (end - start).days + 1
-
-        rental_cost = item.price_per_day * days
-        commission = (rental_cost * platform_commission_rate()).quantize(Decimal('1'))
-        total = rental_cost + commission + item.deposit
+        pricing = compute_pricing(item, start, end)
         initial_status = self.context.get('initial_status', Booking.STATUS_DRAFT)
 
         return Booking.objects.create(
@@ -62,14 +76,37 @@ class BookingCreateSerializer(serializers.ModelSerializer):
             item=item,
             start_date=start,
             end_date=end,
-            price_per_day=item.price_per_day,
-            deposit_amount=item.deposit,
-            commission_amount=commission,
-            total_price=total,
+            price_per_day=pricing['price_per_day'],
+            deposit_amount=pricing['deposit'],
+            commission_amount=pricing['commission_amount'],
+            total_price=pricing['total_price'],
             renter_comment=validated_data.get('renter_comment', ''),
-            escrow_amount=total,
+            escrow_amount=pricing['total_price'],
             status=initial_status,
         )
+
+
+class DealPreviewSerializer(serializers.Serializer):
+    """
+    POST /deals/preview/ — тот же расчёт, что при создании сделки, но без
+    побочных эффектов (ничего не создаётся, даты не проверяются/не блокируются).
+    """
+    item = serializers.PrimaryKeyRelatedField(queryset=Item.objects.filter(status=Item.STATUS_APPROVED))
+    start_date = serializers.DateField()
+    end_date = serializers.DateField()
+
+    def validate(self, attrs):
+        if attrs['start_date'] > attrs['end_date']:
+            raise serializers.ValidationError('Дата начала не может быть позже даты окончания.')
+        return attrs
+
+
+class DealPreviewResponseSerializer(serializers.Serializer):
+    days = serializers.IntegerField()
+    price_per_day = serializers.DecimalField(max_digits=12, decimal_places=0)
+    deposit = serializers.DecimalField(max_digits=12, decimal_places=0)
+    commission_amount = serializers.DecimalField(max_digits=12, decimal_places=0)
+    total_price = serializers.DecimalField(max_digits=12, decimal_places=0)
 
 
 class BookingPhotoSerializer(serializers.ModelSerializer):

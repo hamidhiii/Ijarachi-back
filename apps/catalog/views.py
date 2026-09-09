@@ -20,7 +20,7 @@ from .serializers import (
     ListingAvailabilitySerializer,
     ListingModerationSerializer,
 )
-from .filters import ItemFilter
+from .filters import ItemFilter, filter_by_attributes
 
 
 class CategoryListView(generics.ListAPIView):
@@ -83,7 +83,7 @@ class ListingListCreateView(generics.ListCreateAPIView):
             qs = qs.order_by('price_per_day')
         elif ordering == '-price':
             qs = qs.order_by('-price_per_day')
-        return qs
+        return filter_by_attributes(qs, self.request.query_params)
 
 
 class ItemListView(ListingListCreateView):

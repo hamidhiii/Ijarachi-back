@@ -61,7 +61,7 @@ class ConversationListCreateView(APIView):
     ]
 
     def get(self, request):
-        qs = Conversation.objects.filter(participants=request.user).prefetch_related('participants', 'messages')
+        qs = Conversation.objects.filter(participants=request.user).select_related('listing').prefetch_related('participants', 'messages', 'listing__images')
         return Response(ConversationSerializer(qs, many=True, context={'request': request}).data)
 
     def post(self, request):
@@ -103,7 +103,7 @@ class ConversationListCreateView(APIView):
         conversation.participants.add(request.user, item.owner)
         conversation = (
             Conversation.objects
-            .prefetch_related('participants', 'messages')
+            .select_related('listing').prefetch_related('participants', 'messages', 'listing__images')
             .get(pk=conversation.pk)
         )
         return Response(
@@ -131,7 +131,7 @@ class ConversationListCreateView(APIView):
 
         conversation = (
             Conversation.objects
-            .prefetch_related('participants', 'messages')
+            .select_related('listing').prefetch_related('participants', 'messages', 'listing__images')
             .get(pk=conversation.pk)
         )
         return Response(

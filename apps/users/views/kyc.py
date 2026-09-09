@@ -1,5 +1,6 @@
 import logging
 
+from drf_spectacular.utils import extend_schema, extend_schema_view
 from rest_framework import status
 from rest_framework.views import APIView
 from rest_framework.response import Response
@@ -8,16 +9,34 @@ from rest_framework.permissions import IsAuthenticated
 from ..models import Profile, PassportDocument, FaceVerification
 from ..serializers import (
     PassportUploadSerializer, PassportConfirmSerializer, PassportStatusSerializer,
+    PassportUploadResponseSerializer,
     FaceVerifySerializer, FaceVerificationStatusSerializer,
 )
 from ..services.kyc import (
     process_passport_image, process_face_verification, KYCProcessingError,
 )
 from django.core.files.base import ContentFile
+from core.schema import DetailSerializer
 
 logger = logging.getLogger(__name__)
 
 
+@extend_schema_view(
+    post=extend_schema(
+        responses={201: PassportUploadResponseSerializer, 422: DetailSerializer},
+        summary='Загрузить фото паспорта/ID (шаг 1)',
+        description=(
+            'multipart: document_type=id_card|passport, front_image=<file>, back_image=<file?>.\n\n'
+            'Обработка синхронная — ответ всегда финальный: либо 201 с extracted (пустая строка '
+            'в поле значит «OCR не распознал», не «ещё обрабатывается»), либо 422 (лицо на фото не '
+            'найдено / документ нечитаем). Промежуточного «обрабатывается» состояния нет.'
+        ),
+    ),
+    get=extend_schema(
+        responses={200: PassportStatusSerializer, 404: DetailSerializer},
+        summary='Статус загруженного документа',
+    ),
+)
 class PassportUploadView(APIView):
     """
     POST /api/v1/kyc/passport/upload/
@@ -92,6 +111,10 @@ class PassportUploadView(APIView):
         return Response(PassportStatusSerializer(doc).data)
 
 
+@extend_schema(
+    responses={200: PassportStatusSerializer, 400: DetailSerializer, 422: DetailSerializer},
+    summary='Подтвердить данные документа (шаг 1, завершение)',
+)
 class PassportConfirmView(APIView):
     """
     POST /api/v1/kyc/passport/confirm/
@@ -129,6 +152,21 @@ class PassportConfirmView(APIView):
         return Response(PassportStatusSerializer(doc).data)
 
 
+@extend_schema_view(
+    post=extend_schema(
+        responses={200: FaceVerificationStatusSerializer, 400: DetailSerializer, 422: FaceVerificationStatusSerializer},
+        summary='Сверить лицо с документом (шаг 2)',
+        description=(
+            'multipart: frame_1=<file> (обязателен), frame_2/frame_3=<file?>. '
+            '200 — face match и liveness пройдены, профиль верифицирован. 422 — не пройдены '
+            '(тело — тот же FaceVerificationStatusSerializer с fail_reason) либо лицо на селфи не найдено.'
+        ),
+    ),
+    get=extend_schema(
+        responses={200: FaceVerificationStatusSerializer, 404: DetailSerializer},
+        summary='Статус проверки лица',
+    ),
+)
 class FaceVerifyView(APIView):
     """
     POST /api/v1/kyc/face/verify/
