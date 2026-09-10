@@ -1,3 +1,5 @@
+import logging
+
 from django.conf import settings
 from drf_spectacular.utils import extend_schema, extend_schema_view
 from rest_framework import generics, status
@@ -8,6 +10,8 @@ from rest_framework.views import APIView
 from apps.bookings.models import Booking
 from apps.catalog.models import Item
 from core.schema import DetailSerializer
+
+logger = logging.getLogger('apps.chat')
 from .models import Conversation, Message
 from .serializers import (
     ConversationCreateSerializer,
@@ -152,8 +156,22 @@ class MessageListView(generics.ListCreateAPIView):
 
     def perform_create(self, serializer):
         conversation = Conversation.objects.get(pk=self.kwargs['pk'], participants=self.request.user)
-        serializer.save(conversation=conversation, sender=self.request.user)
+        message = serializer.save(conversation=conversation, sender=self.request.user)
         conversation.save(update_fields=['updated_at'])
+
+        try:
+            from apps.notifications.models import Notification
+            from apps.notifications.tasks import create_notification
+
+            preview = (message.text or '').strip()[:120] or 'Новое фото'
+            for user in conversation.participants.exclude(pk=self.request.user.pk):
+                create_notification(user, Notification.TYPE_CHAT, {
+                    'title': 'Новое сообщение',
+                    'message': preview,
+                    'conversation_id': conversation.pk,
+                })
+        except Exception:
+            logger.exception('Failed to notify participants about message #%s', message.pk)
 
 
 @extend_schema(

@@ -60,6 +60,9 @@ class Profile(models.Model):
     wallet_balance = models.DecimalField('Баланс (сум)', max_digits=14, decimal_places=0, default=0)
     is_verified_kyc = models.BooleanField(default=False)
     kyc_verified_at = models.DateTimeField(null=True, blank=True)
+    # Дублировать уведомления в Telegram-бот (тот же, что доставляет OTP) —
+    # включено по умолчанию, пользователь может выключить в настройках.
+    notify_telegram = models.BooleanField('Дублировать уведомления в Telegram', default=True)
     verification_status = models.CharField(
         'Статус верификации',
         max_length=20,

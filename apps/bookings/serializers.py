@@ -137,9 +137,9 @@ def _serialize_listing_mini(item, request):
 
 def _serialize_user_mini(user):
     try:
-        full_name = user.profile.full_name or user.phone
+        full_name = user.profile.full_name
     except Exception:
-        full_name = user.phone
+        full_name = ''
     return {'id': user.id, 'full_name': full_name}
 
 
@@ -531,15 +531,15 @@ class DealReviewSerializer(serializers.ModelSerializer):
 
     def get_reviewer_name(self, obj):
         try:
-            return obj.reviewer.profile.full_name or obj.reviewer.phone
+            return obj.reviewer.profile.full_name
         except Exception:
-            return obj.reviewer.phone
+            return ''
 
     def get_reviewee_name(self, obj):
         try:
-            return obj.reviewee.profile.full_name or obj.reviewee.phone
+            return obj.reviewee.profile.full_name
         except Exception:
-            return obj.reviewee.phone
+            return ''
 
 
 def refresh_user_rating(user):

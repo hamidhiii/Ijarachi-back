@@ -389,6 +389,15 @@ OTP_SMS_FALLBACK_ENABLED = config('OTP_SMS_FALLBACK_ENABLED', default=False, cas
 # Mobile app deep-link scheme (rentoo://...)
 APP_DEEPLINK_SCHEME = config('APP_DEEPLINK_SCHEME', default='rentoo')
 
+# ─── Web Push (уведомления при закрытом браузере) ─────────────────────────────
+
+# Сгенерировать пару: python manage.py generate_vapid_keys
+VAPID_PRIVATE_KEY = config('VAPID_PRIVATE_KEY', default='')
+VAPID_PUBLIC_KEY = config('VAPID_PUBLIC_KEY', default='')
+# "sub" в JWT VAPID-заголовка — по спецификации обязателен, провайдеры (FCM и
+# т.п.) используют его, чтобы связаться с отправителем при проблемах.
+VAPID_CLAIM_EMAIL = config('VAPID_CLAIM_EMAIL', default='mailto:admin@rentoo.uz')
+
 # ─── Swagger/Redoc ────────────────────────────────────────────────────────────
 
 SPECTACULAR_SETTINGS = {

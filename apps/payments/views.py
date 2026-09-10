@@ -63,6 +63,17 @@ def finalize_paid_payment(payment: Payment):
         payload = {'booking_id': booking.pk, 'message': 'Чат по сделке открыт'}
         create_notification(booking.renter, Notification.TYPE_CHAT, payload)
         create_notification(booking.item.owner, Notification.TYPE_CHAT, payload)
+
+        create_notification(booking.renter, Notification.TYPE_PAYMENT, {
+            'title': 'Оплата прошла',
+            'message': f'Оплата сделки «{booking.item.title}» прошла успешно.',
+            'booking_id': booking.pk,
+        })
+        create_notification(booking.item.owner, Notification.TYPE_PAYMENT, {
+            'title': 'Оплата прошла',
+            'message': f'Арендатор оплатил «{booking.item.title}».',
+            'booking_id': booking.pk,
+        })
     except Exception as exc:
         logger.exception('Failed to open paid booking chat for booking #%s: %s', booking.pk, exc)
 

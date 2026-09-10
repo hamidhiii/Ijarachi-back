@@ -558,6 +558,9 @@ class BookingStatusUpdateView(APIView):
                 from apps.bookings.tasks import release_escrow
                 release_escrow.delay(booking.pk)
 
+        from apps.bookings.tasks import notify_status_change
+        notify_status_change.delay(booking.pk, request.user.pk)
+
         return Response(BookingDetailSerializer(booking, context={'request': request}).data)
 
     def _confirm_without_provider(self, booking):

@@ -9,16 +9,14 @@ logger = logging.getLogger('apps.bookings')
 def notify_owner_new_booking(self, booking_id: int):
     """
     Уведомляет владельца о новом запросе аренды: запись в Notification
-    (попадает в список /notifications/ и в счётчик непрочитанных), плюс
-    пуш в Telegram-бот, если владелец уже привязал номер (тот же бот,
-    что доставляет OTP) — в интерфейсе ответ может подождать, а в
-    Telegram у владельца больше шансов увидеть запрос вовремя.
+    (попадает в список /notifications/ и в счётчик непрочитанных), а
+    create_notification сам же дублирует её в Telegram-бот, если владелец
+    привязан и не выключил notify_telegram.
     """
     try:
         from apps.bookings.models import Booking
         from apps.notifications.models import Notification
         from apps.notifications.tasks import create_notification
-        from apps.users.telegram_bot import get_telegram_link, send_telegram_message
 
         booking = Booking.objects.select_related('item__owner', 'renter__profile').get(pk=booking_id)
         owner = booking.item.owner
@@ -37,17 +35,6 @@ def notify_owner_new_booking(self, booking_id: int):
             'booking_id': booking.pk,
         })
         logger.info('Deal notification created for owner=%s booking=#%s', owner.phone, booking_id)
-
-        link = get_telegram_link(owner.phone)
-        if link:
-            text = (
-                f'🔔 Rentoo: новый запрос аренды «{booking.item.title}» от {renter_name}.\n'
-                f'Даты: {booking.start_date} — {booking.end_date}.\n'
-                f'Пожалуйста, ответьте как можно скорее в приложении.'
-            )
-            send_telegram_message(link.chat_id, text)
-        else:
-            logger.info('Owner %s has no Telegram link, skipping push for booking #%s', owner.phone, booking_id)
     except Exception as exc:
         logger.error('notify_owner_new_booking failed: %s', exc)
         raise self.retry(exc=exc)
@@ -188,3 +175,33 @@ def expire_stale_bookings(self):
             expired, settings.BOOKING_ABANDON_TIMEOUT_HOURS,
         )
     return expired
+
+
+@shared_task(bind=True, max_retries=3, default_retry_delay=60)
+def notify_status_change(self, booking_id: int, actor_user_id: int = None):
+    """
+    Уведомляет о смене статуса сделки: если актёр — одна из сторон, уведомляем
+    только вторую; если статус сменил сотрудник/система (actor не арендатор
+    и не владелец, включая None), уведомляем обе стороны.
+    """
+    try:
+        from apps.bookings.models import Booking
+        from apps.notifications.models import Notification
+        from apps.notifications.tasks import create_notification
+
+        booking = Booking.objects.select_related('item__owner', 'renter').get(pk=booking_id)
+        parties = [booking.renter, booking.item.owner]
+        recipients = [u for u in parties if u.id != actor_user_id]
+        if not recipients:
+            recipients = parties
+
+        for user in recipients:
+            role = 'renter' if user.id == booking.renter_id else 'owner'
+            create_notification(user, Notification.TYPE_DEAL, {
+                'title': 'Статус сделки изменился',
+                'message': f'«{booking.item.title}»: {booking.progress_for(role)}.',
+                'booking_id': booking.pk,
+            })
+    except Exception as exc:
+        logger.error('notify_status_change failed for booking #%s: %s', booking_id, exc)
+        raise self.retry(exc=exc)

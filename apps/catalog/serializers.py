@@ -75,12 +75,12 @@ def _serialize_owner(item, request):
         profile = item.owner.profile
         return {
             'id': item.owner.id,
-            'full_name': profile.full_name or item.owner.phone,
+            'full_name': profile.full_name,
             'rating': profile.rating,
             'verified': bool(profile.is_verified_kyc),
         }
     except Exception:
-        return {'id': item.owner.id, 'full_name': item.owner.phone, 'rating': 0, 'verified': False}
+        return {'id': item.owner.id, 'full_name': '', 'rating': 0, 'verified': False}
 
 
 class ItemListSerializer(serializers.ModelSerializer):

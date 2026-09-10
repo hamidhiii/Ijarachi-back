@@ -18,9 +18,9 @@ class MessageSerializer(serializers.ModelSerializer):
     @extend_schema_field(UserMiniSerializer)
     def get_sender(self, obj):
         try:
-            full_name = obj.sender.profile.full_name or obj.sender.phone
+            full_name = obj.sender.profile.full_name
         except Exception:
-            full_name = obj.sender.phone
+            full_name = ''
         return {'id': obj.sender_id, 'full_name': full_name}
 
 
@@ -70,9 +70,9 @@ class ConversationSerializer(serializers.ModelSerializer):
         if other is None:
             return None
         try:
-            full_name = other.profile.full_name or other.phone
+            full_name = other.profile.full_name
         except Exception:
-            full_name = other.phone
+            full_name = ''
         return {'id': other.pk, 'full_name': full_name}
 
     @extend_schema_field(serializers.IntegerField())

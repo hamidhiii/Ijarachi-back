@@ -1,3 +1,5 @@
+import logging
+
 from rest_framework import generics, status, permissions
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -21,6 +23,8 @@ from .serializers import (
     ListingModerationSerializer,
 )
 from .filters import ItemFilter, filter_by_attributes
+
+logger = logging.getLogger('apps.catalog')
 
 
 class CategoryListView(generics.ListAPIView):
@@ -264,6 +268,27 @@ class ListingModerationView(APIView):
         item.status = serializer.validated_data['status']
         item.rejection_reason = serializer.validated_data.get('rejection_reason', '')
         item.save(update_fields=['status', 'rejection_reason', 'updated_at'])
+
+        try:
+            from apps.notifications.models import Notification
+            from apps.notifications.tasks import create_notification
+
+            if item.status == Item.STATUS_APPROVED:
+                title, message = 'Объявление одобрено', f'«{item.title}» прошло модерацию и опубликовано.'
+            elif item.status == Item.STATUS_REJECTED:
+                title = 'Объявление отклонено'
+                message = f'«{item.title}» отклонено на модерации.' + (
+                    f' Причина: {item.rejection_reason}' if item.rejection_reason else ''
+                )
+            else:
+                title = message = None
+            if title:
+                create_notification(item.owner, Notification.TYPE_SYSTEM, {
+                    'title': title, 'message': message, 'listing_id': item.pk,
+                })
+        except Exception:
+            logger.exception('Failed to notify owner about moderation result for item #%s', item.pk)
+
         return Response(ItemDetailSerializer(item, context={'request': request}).data)
 
 

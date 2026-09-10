@@ -1,6 +1,7 @@
+from drf_spectacular.utils import extend_schema_field
 from rest_framework import serializers
 
-from .models import Notification, NotificationTemplate
+from .models import Notification, NotificationTemplate, PushSubscription
 
 # Заголовки/описания по умолчанию, если для типа нет активного NotificationTemplate.
 DEFAULT_TITLES = {
@@ -32,6 +33,7 @@ class NotificationSerializer(serializers.ModelSerializer):
     def _template(self, obj):
         return NotificationTemplate.objects.filter(key=obj.type, language='ru', is_active=True).first()
 
+    @extend_schema_field(serializers.CharField())
     def get_title(self, obj):
         payload = obj.payload or {}
         if payload.get('title'):
@@ -41,6 +43,7 @@ class NotificationSerializer(serializers.ModelSerializer):
             return template.title
         return DEFAULT_TITLES.get(obj.type, 'Уведомление')
 
+    @extend_schema_field(serializers.CharField(allow_blank=True))
     def get_description(self, obj):
         payload = obj.payload or {}
         if payload.get('message'):
@@ -55,12 +58,15 @@ class NotificationSerializer(serializers.ModelSerializer):
                 return template.body
         return ''
 
+    @extend_schema_field(serializers.ChoiceField(choices=['in_app']))
     def get_channel(self, obj):
         return 'in_app'
 
+    @extend_schema_field(serializers.BooleanField())
     def get_unread(self, obj):
         return not obj.is_read
 
+    @extend_schema_field(serializers.CharField(allow_null=True))
     def get_link(self, obj):
         payload = obj.payload or {}
         if payload.get('link'):
@@ -74,3 +80,30 @@ class NotificationSerializer(serializers.ModelSerializer):
         if payload.get('conversation_id'):
             return f"/chat/{payload['conversation_id']}"
         return None
+
+
+class PushSubscriptionKeysSerializer(serializers.Serializer):
+    p256dh = serializers.CharField()
+    auth = serializers.CharField()
+
+
+class PushSubscriptionSerializer(serializers.Serializer):
+    """
+    POST /push/subscribe/ — тело ровно то, что отдаёт браузер из
+    PushManager.subscribe(): {endpoint, keys: {p256dh, auth}}.
+    """
+    endpoint = serializers.URLField(max_length=500)
+    keys = PushSubscriptionKeysSerializer()
+
+    def create(self, validated_data):
+        user = self.context['request'].user
+        keys = validated_data['keys']
+        subscription, _ = PushSubscription.objects.update_or_create(
+            endpoint=validated_data['endpoint'],
+            defaults={'user': user, 'p256dh': keys['p256dh'], 'auth': keys['auth']},
+        )
+        return subscription
+
+
+class PushUnsubscribeSerializer(serializers.Serializer):
+    endpoint = serializers.URLField(max_length=500)

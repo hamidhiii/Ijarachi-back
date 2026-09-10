@@ -1,5 +1,6 @@
 import re
 
+from drf_spectacular.utils import extend_schema_field
 from rest_framework import serializers
 from rest_framework_simplejwt.tokens import RefreshToken
 from django.contrib.auth import get_user_model
@@ -52,12 +53,15 @@ class ProfileSerializer(serializers.ModelSerializer):
     email = serializers.EmailField(source='user.email', required=False)
     verified = serializers.BooleanField(source='is_verified_kyc', read_only=True)
     role = serializers.SerializerMethodField()
+    telegram_connected = serializers.SerializerMethodField()
+    telegram_deep_link = serializers.SerializerMethodField()
 
     class Meta:
         model = Profile
         fields = [
             'id', 'phone', 'email', 'full_name', 'avatar',
             'rating', 'verified', 'role',
+            'notify_telegram', 'telegram_connected', 'telegram_deep_link',
             # Доп. поля для обратной совместимости с мобильным клиентом.
             'rating_count', 'verification_status', 'wallet_balance',
             'is_verified_kyc', 'kyc_verified_at',
@@ -71,8 +75,26 @@ class ProfileSerializer(serializers.ModelSerializer):
             'kyc_verified_at',
         ]
 
+    @extend_schema_field(serializers.ChoiceField(choices=['admin', 'user']))
     def get_role(self, obj):
         return 'admin' if obj.user.is_staff else 'user'
+
+    @extend_schema_field(serializers.BooleanField())
+    def get_telegram_connected(self, obj):
+        from .telegram_bot import get_telegram_link
+        return get_telegram_link(obj.user.phone) is not None
+
+    @extend_schema_field(serializers.URLField(allow_null=True))
+    def get_telegram_deep_link(self, obj):
+        """
+        Ссылка «Подключить Telegram» для тех, кто входил по SMS-фолбэку и
+        никогда не писал боту — без привязки notify_telegram ни на что не влияет.
+        null, если уже привязан или у бота не задан username.
+        """
+        from .telegram_bot import build_deep_link, get_telegram_link
+        if get_telegram_link(obj.user.phone) is not None:
+            return None
+        return build_deep_link(obj.user.phone)
 
     def update(self, instance, validated_data):
         user_data = validated_data.pop('user', {})
@@ -109,6 +131,7 @@ class PublicUserSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = fields
 
+    @extend_schema_field(serializers.URLField(allow_null=True))
     def get_avatar(self, obj):
         try:
             avatar = obj.profile.avatar
@@ -119,24 +142,28 @@ class PublicUserSerializer(serializers.ModelSerializer):
         request = self.context.get('request')
         return request.build_absolute_uri(avatar.url) if request else avatar.url
 
+    @extend_schema_field(serializers.CharField())
     def get_full_name(self, obj):
         try:
             return obj.profile.full_name
         except Exception:
             return ''
 
+    @extend_schema_field(serializers.FloatField())
     def get_rating(self, obj):
         try:
             return obj.profile.rating
         except Exception:
             return 0
 
+    @extend_schema_field(serializers.IntegerField())
     def get_rating_count(self, obj):
         try:
             return obj.profile.rating_count
         except Exception:
             return 0
 
+    @extend_schema_field(serializers.BooleanField())
     def get_is_verified_kyc(self, obj):
         try:
             return obj.profile.is_verified_kyc
@@ -145,9 +172,11 @@ class PublicUserSerializer(serializers.ModelSerializer):
 
     get_verified = get_is_verified_kyc
 
+    @extend_schema_field(serializers.ChoiceField(choices=['admin', 'user']))
     def get_role(self, obj):
         return 'admin' if obj.is_staff else 'user'
 
+    @extend_schema_field(serializers.ChoiceField(choices=[c for c, _ in Profile.VERIFICATION_CHOICES]))
     def get_verification_status(self, obj):
         try:
             return obj.profile.verification_status

@@ -237,19 +237,22 @@ class FaceVerifyView(APIView):
                 )
             except Exception:
                 logger.exception('Failed to write KYC audit log for user %s', request.user.pk)
+            self._notify_kyc_result(request.user, approved=True)
         else:
             reasons = []
             if not result['match_passed']:
                 reasons.append('Лицо не совпадает с фото на документе.')
             if not result['liveness_passed']:
                 reasons.append(result['liveness_reason'] or 'Проверка живости не пройдена.')
+            reason_text = ' '.join(reasons)
             face_verification.mark_failed(
-                ' '.join(reasons),
+                reason_text,
                 match_score=result['match_score'],
                 liveness_score=result['liveness_score'],
                 face_match_passed=result['match_passed'],
                 liveness_passed=result['liveness_passed'],
             )
+            self._notify_kyc_result(request.user, approved=False, reason=reason_text)
 
         return Response(
             FaceVerificationStatusSerializer(face_verification).data,
@@ -263,3 +266,18 @@ class FaceVerifyView(APIView):
         except FaceVerification.DoesNotExist:
             return Response({'detail': 'Проверка лица не пройдена.'}, status=status.HTTP_404_NOT_FOUND)
         return Response(FaceVerificationStatusSerializer(fv).data)
+
+    @staticmethod
+    def _notify_kyc_result(user, approved: bool, reason: str = ''):
+        from apps.notifications.models import Notification
+        from apps.notifications.tasks import create_notification
+
+        if approved:
+            title, message = 'Личность подтверждена', 'Проверка документа и лица пройдена успешно.'
+        else:
+            title = 'Проверка личности не пройдена'
+            message = 'Не удалось подтвердить личность.' + (f' {reason}' if reason else '')
+        try:
+            create_notification(user, Notification.TYPE_SYSTEM, {'title': title, 'message': message})
+        except Exception:
+            logger.exception('Failed to notify user %s about KYC result', user.pk)
