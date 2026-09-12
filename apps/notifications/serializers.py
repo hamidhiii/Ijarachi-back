@@ -68,17 +68,22 @@ class NotificationSerializer(serializers.ModelSerializer):
 
     @extend_schema_field(serializers.CharField(allow_null=True))
     def get_link(self, obj):
+        """
+        Реальные маршруты фронта (не /deals//listings//chat/ — те не существуют):
+        сделка → /booking/<id>, объявление → /product/<id>, сообщение →
+        /messages?listing=<id> или /messages?deal=<id>, KYC → /profile.
+        payload['link'] (ставится в местах, где известен точный контекст —
+        напр. чат, KYC) всегда побеждает эти общие правила по id.
+        """
         payload = obj.payload or {}
         if payload.get('link'):
             return payload['link']
         if payload.get('booking_id'):
-            return f"/deals/{payload['booking_id']}"
+            return f"/booking/{payload['booking_id']}"
         if payload.get('deal_id'):
-            return f"/deals/{payload['deal_id']}"
+            return f"/booking/{payload['deal_id']}"
         if payload.get('listing_id'):
-            return f"/listings/{payload['listing_id']}"
-        if payload.get('conversation_id'):
-            return f"/chat/{payload['conversation_id']}"
+            return f"/product/{payload['listing_id']}"
         return None
 
 

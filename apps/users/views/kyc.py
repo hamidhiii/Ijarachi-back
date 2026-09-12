@@ -278,6 +278,8 @@ class FaceVerifyView(APIView):
             title = 'Проверка личности не пройдена'
             message = 'Не удалось подтвердить личность.' + (f' {reason}' if reason else '')
         try:
-            create_notification(user, Notification.TYPE_SYSTEM, {'title': title, 'message': message})
+            create_notification(user, Notification.TYPE_SYSTEM, {
+                'title': title, 'message': message, 'link': '/profile',
+            })
         except Exception:
             logger.exception('Failed to notify user %s about KYC result', user.pk)

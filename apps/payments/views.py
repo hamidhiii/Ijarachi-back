@@ -60,7 +60,11 @@ def finalize_paid_payment(payment: Payment):
             conversation.deal = booking
             conversation.save(update_fields=['deal', 'updated_at'])
         conversation.participants.add(booking.renter, booking.item.owner)
-        payload = {'booking_id': booking.pk, 'message': 'Чат по сделке открыт'}
+        payload = {
+            'booking_id': booking.pk,
+            'message': 'Чат по сделке открыт',
+            'link': f'/messages?deal={booking.pk}',
+        }
         create_notification(booking.renter, Notification.TYPE_CHAT, payload)
         create_notification(booking.item.owner, Notification.TYPE_CHAT, payload)
 

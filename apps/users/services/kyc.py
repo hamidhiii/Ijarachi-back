@@ -9,6 +9,7 @@
 Все вычисления выполняются локально через open-source библиотеки
 (opencv, face_recognition/dlib, pytesseract) — без внешних платных API.
 """
+import io
 import logging
 import re
 from datetime import datetime
@@ -17,6 +18,7 @@ from typing import Optional
 import cv2
 import numpy as np
 from django.conf import settings
+from PIL import Image, ImageOps
 
 logger = logging.getLogger(__name__)
 
@@ -80,15 +82,24 @@ def get_verification_status(user) -> dict:
 
 
 def _read_rgb(django_file) -> np.ndarray:
-    """Читает Django UploadedFile/ImageFieldFile в RGB numpy-массив."""
+    """
+    Читает Django UploadedFile/ImageFieldFile в RGB numpy-массив.
+
+    Через PIL, а не напрямую через cv2.imdecode — камера телефона обычно
+    пишет вертикальные снимки как «широкие» пиксели + EXIF-тег Orientation,
+    а cv2 этот тег игнорирует. Без exif_transpose() лицо на снимке документа
+    приходит в детектор лежащим на боку и HOG-детектор его не находит —
+    визуально фото выглядит нормально в любом просмотрщике (он-то EXIF читает),
+    поэтому со стороны выглядит как «на явно нормальном фото лицо не нашли».
+    """
     django_file.seek(0)
     data = django_file.read()
     django_file.seek(0)
-    buf = np.frombuffer(data, dtype=np.uint8)
-    bgr = cv2.imdecode(buf, cv2.IMREAD_COLOR)
-    if bgr is None:
+    try:
+        pil_image = ImageOps.exif_transpose(Image.open(io.BytesIO(data)))
+        return np.array(pil_image.convert('RGB'))
+    except Exception:
         raise KYCProcessingError('Не удалось прочитать изображение.')
-    return cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
 
 
 def _encode_jpeg(rgb: np.ndarray) -> bytes:
@@ -100,8 +111,21 @@ def _encode_jpeg(rgb: np.ndarray) -> bytes:
 
 
 def _largest_face_location(rgb: np.ndarray):
+    """
+    HOG (быстрый) надёжно находит крупное лицо, но регулярно пропускает
+    мелкий/под углом портрет — типичная ситуация на фото документа, где всё
+    ID-карта в кадре, а сам портрет на ней занимает малую часть снимка.
+    Поэтому при неудаче повторяем с большим апсемплингом, а последним шансом
+    пробуем CNN-детектор (точнее на нестандартных ракурсах и печатных фото,
+    но заметно медленнее — поэтому не по умолчанию, только как fallback).
+    """
     import face_recognition
-    locations = face_recognition.face_locations(rgb, model='hog')
+
+    locations = face_recognition.face_locations(rgb, model='hog', number_of_times_to_upsample=1)
+    if not locations:
+        locations = face_recognition.face_locations(rgb, model='hog', number_of_times_to_upsample=2)
+    if not locations:
+        locations = face_recognition.face_locations(rgb, model='cnn')
     if not locations:
         return None
     # (top, right, bottom, left) — берём самое крупное лицо на кадре
@@ -211,7 +235,8 @@ def process_passport_image(front_image_file) -> dict:
     encoding, face_jpeg, _ = extract_face(rgb)
     if encoding is None:
         raise KYCProcessingError(
-            'На фото документа не найдено лицо. Сделайте более чёткий снимок при хорошем освещении.'
+            'Не удалось найти лицо на фото документа. Переснимите лицевую сторону '
+            'при хорошем освещении, без бликов, документ — по центру кадра.'
         )
 
     fields['face_encoding'] = encoding

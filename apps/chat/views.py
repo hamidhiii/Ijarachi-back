@@ -164,11 +164,18 @@ class MessageListView(generics.ListCreateAPIView):
             from apps.notifications.tasks import create_notification
 
             preview = (message.text or '').strip()[:120] or 'Новое фото'
+            if conversation.deal_id:
+                link = f'/messages?deal={conversation.deal_id}'
+            elif conversation.listing_id:
+                link = f'/messages?listing={conversation.listing_id}'
+            else:
+                link = None
             for user in conversation.participants.exclude(pk=self.request.user.pk):
                 create_notification(user, Notification.TYPE_CHAT, {
                     'title': 'Новое сообщение',
                     'message': preview,
                     'conversation_id': conversation.pk,
+                    'link': link,
                 })
         except Exception:
             logger.exception('Failed to notify participants about message #%s', message.pk)
