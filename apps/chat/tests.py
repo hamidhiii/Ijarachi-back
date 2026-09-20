@@ -51,7 +51,7 @@ class ConversationCreateGateTests(APITestCase):
         response = self.client.post(self.url, {'listing_id': self.item.pk}, format='json')
 
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
-        self.assertEqual(response.data['listing'], self.item.pk)
+        self.assertEqual(response.data['listing']['id'], self.item.pk)
         self.assertIsNone(response.data['deal'])
 
     def test_listing_based_chat_is_idempotent(self):

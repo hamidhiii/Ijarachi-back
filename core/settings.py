@@ -330,7 +330,11 @@ ESKIZ_BASE_URL = config('ESKIZ_BASE_URL', default='https://notify.eskiz.uz/api')
 ESKIZ_SENDER_ID = config('ESKIZ_SENDER_ID', default='4546')
 SMS_REQUEST_TIMEOUT_SECONDS = config('SMS_REQUEST_TIMEOUT_SECONDS', default=10, cast=int)
 
-# Собственный KYC (паспорт/ID-карта + сверка лица), заменяет стороннюю MyID-интеграцию
+# Собственный KYC (паспорт/ID-карта + сверка лица), заменяет стороннюю MyID-интеграцию.
+# ВЫКЛЮЧЕН: в Узбекистане идентификацию нельзя вести собственными силами. Пока флаг
+# False — сделки и оплата не требуют верификации, KYC-эндпоинты не зарегистрированы,
+# учётные расходы на KYC не пишутся. Данные ранее загруженных документов не удаляются.
+KYC_ENABLED = config('KYC_ENABLED', default=False, cast=bool)
 KYC_FIRST_DEAL_COST = config('KYC_FIRST_DEAL_COST', default=8000, cast=int)
 # face_recognition distance threshold: чем меньше — тем строже сверка лица с документом (0..1)
 KYC_FACE_MATCH_DISTANCE = config('KYC_FACE_MATCH_DISTANCE', default=0.5, cast=float)

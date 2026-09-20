@@ -8,6 +8,8 @@ logger = logging.getLogger(__name__)
 
 @shared_task(bind=True, max_retries=3, default_retry_delay=120)
 def charge_kyc_first_deal_cost(self, user_id: int, booking_id: int):
+    if not settings.KYC_ENABLED:
+        return
     try:
         from apps.payments.models import Transaction
         from apps.users.models import CustomUser

@@ -49,6 +49,8 @@ ROLE_PARAMETER = OpenApiParameter(
 
 
 def user_is_kyc_verified(user) -> bool:
+    if not settings.KYC_ENABLED:
+        return True
     try:
         return bool(user.profile.is_verified_kyc)
     except Exception:
