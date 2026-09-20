@@ -21,10 +21,12 @@ def notify_owner_new_booking(self, booking_id: int):
         booking = Booking.objects.select_related('item__owner', 'renter__profile').get(pk=booking_id)
         owner = booking.item.owner
 
+        # Телефон арендатора владельцу до подтверждения не показываем — контакты
+        # раскрываются только после подтверждения сделки (contact_revealed_at).
         try:
-            renter_name = booking.renter.profile.full_name or booking.renter.phone
+            renter_name = booking.renter.profile.full_name or 'Арендатор'
         except Exception:
-            renter_name = booking.renter.phone
+            renter_name = 'Арендатор'
 
         create_notification(owner, Notification.TYPE_DEAL, {
             'title': 'Новый запрос аренды',

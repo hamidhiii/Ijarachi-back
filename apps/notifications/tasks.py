@@ -40,6 +40,8 @@ def send_telegram_notification(self, notification_id: int):
     слать ли в Telegram, и это делал только один из них (новая заявка на аренду).
     """
     try:
+        from django.conf import settings
+
         from .models import Notification
         from .serializers import NotificationSerializer
         from apps.users.telegram_bot import get_telegram_link, send_telegram_message
@@ -59,6 +61,14 @@ def send_telegram_notification(self, notification_id: int):
         text = f"🔔 {data['title']}"
         if data.get('description'):
             text += f"\n{data['description']}"
+        link_path = data.get('link')
+        if link_path:
+            # В Telegram нужен абсолютный адрес: относительный /booking/5 там не
+            # кликается. Ссылка ведёт прямо к сделке/чату.
+            absolute = link_path if link_path.startswith('http') else (
+                settings.FRONTEND_BASE_URL.rstrip('/') + link_path
+            )
+            text += f"\n\n{absolute}"
         send_telegram_message(link.chat_id, text)
     except Exception as exc:
         logger.error('send_telegram_notification failed: %s', exc)

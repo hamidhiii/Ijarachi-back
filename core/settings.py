@@ -360,8 +360,10 @@ CLICK_MERCHANT_ID = config('CLICK_MERCHANT_ID', default='')
 CLICK_SECRET_KEY = config('CLICK_SECRET_KEY', default='')
 
 # Куда провайдер возвращает пользователя после оплаты ({id} — id сделки).
+# Публичный адрес фронта: из него строятся абсолютные ссылки в Telegram-сообщениях.
+FRONTEND_BASE_URL = config('FRONTEND_BASE_URL', default='https://rentoo.uz')
 PAYMENT_RETURN_URL_TEMPLATE = config(
-    'PAYMENT_RETURN_URL_TEMPLATE', default='https://rentoo.uz/bookings/{id}?payment=done'
+    'PAYMENT_RETURN_URL_TEMPLATE', default='https://rentoo.uz/booking/{id}?payment=done'
 )
 
 # Через сколько часов неоплаченная (draft/pending_payment) сделка отменяется
