@@ -21,8 +21,11 @@ class ItemImageInline(admin.TabularInline):
 
 @admin.register(Item)
 class ItemAdmin(admin.ModelAdmin):
-    list_display = ['title', 'owner', 'category', 'price_per_day', 'deposit', 'status', 'city', 'created_at']
-    list_filter = ['status', 'condition', 'category', 'city']
+    list_display = [
+        'title', 'owner', 'category', 'price_per_day', 'is_negotiable',
+        'deposit', 'status', 'city', 'created_at',
+    ]
+    list_filter = ['status', 'condition', 'category', 'city', 'is_negotiable']
     search_fields = ['title', 'description', 'owner__phone']
     list_editable = ['status']
     raw_id_fields = ['owner', 'category']
@@ -30,7 +33,7 @@ class ItemAdmin(admin.ModelAdmin):
     readonly_fields = ['created_at', 'updated_at']
     fieldsets = (
         ('Основное', {'fields': ('owner', 'category', 'title', 'description', 'condition', 'status')}),
-        ('Цена', {'fields': ('price_per_day', 'deposit')}),
+        ('Цена', {'fields': ('price_per_day', 'is_negotiable', 'deposit')}),
         ('Локация', {'fields': ('city', 'address', 'latitude', 'longitude')}),
         ('Характеристики', {'fields': ('attributes',)}),
         ('Даты', {'fields': ('created_at', 'updated_at')}),

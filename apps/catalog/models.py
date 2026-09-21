@@ -90,6 +90,11 @@ class Item(models.Model):
     view_count = models.PositiveIntegerField(default=0)
     favorite_count = models.PositiveIntegerField(default=0)
     min_rental_days = models.PositiveIntegerField(default=1)
+    # «Торг»: владелец готов обсуждать цену. Показывается рядом с ценой в
+    # каталоге и на карточке — это заявление о числе, а не статус модерации.
+    # Умолчание False: объявление, размещённое до появления поля, не должно
+    # задним числом начать обещать торг.
+    is_negotiable = models.BooleanField('Торг уместен', default=False)
     # Значения характеристик, специфичных для категории (см. Category.attributes),
     # напр. {"size": ["42","44"], "height": 170}. Только скаляры (str/number) и
     # списки строк — не вложенные объекты. PATCH заменяет объект целиком.

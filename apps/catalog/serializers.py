@@ -98,6 +98,7 @@ class ItemListSerializer(serializers.ModelSerializer):
             'id', 'title', 'description', 'category',
             'price_per_day', 'deposit', 'condition',
             'address', 'city', 'district', 'latitude', 'longitude', 'min_rental_days',
+            'is_negotiable',
             'status', 'images', 'attributes', 'owner', 'rating', 'reviews_count',
             'view_count', 'favorite_count', 'is_favorite', 'created_at',
         ]
@@ -141,7 +142,7 @@ class ItemDetailSerializer(serializers.ModelSerializer):
             'id', 'title', 'description', 'price_per_day', 'deposit',
             'condition', 'status', 'city', 'district', 'address', 'latitude', 'longitude',
             'category', 'images', 'attributes', 'blocked_dates', 'owner', 'created_at',
-            'view_count', 'favorite_count', 'min_rental_days',
+            'view_count', 'favorite_count', 'min_rental_days', 'is_negotiable',
             'is_favorite', 'rating', 'reviews_count',
         ]
 
@@ -184,7 +185,7 @@ class ItemCreateSerializer(serializers.ModelSerializer):
             'title', 'description', 'category',
             'price_per_day', 'deposit', 'condition',
             'address', 'city', 'district', 'latitude', 'longitude', 'min_rental_days',
-            'attributes',
+            'is_negotiable', 'attributes',
         ]
 
     def validate_price_per_day(self, value):
@@ -217,7 +218,7 @@ class ItemUpdateSerializer(serializers.ModelSerializer):
             'title', 'description', 'category',
             'price_per_day', 'deposit', 'condition',
             'address', 'city', 'district', 'latitude', 'longitude', 'min_rental_days', 'status',
-            'attributes',
+            'is_negotiable', 'attributes',
         ]
 
     def validate_attributes(self, value):
