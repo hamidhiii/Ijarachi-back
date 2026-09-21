@@ -68,7 +68,17 @@ class SendOTPView(APIView):
                 status=status.HTTP_503_SERVICE_UNAVAILABLE,
             )
 
-        return Response({'detail': 'Код отправлен.', 'phone': phone})
+        # The link goes out on the success answer too, not only when the bot
+        # still has to be confirmed. The code was just delivered to a Telegram
+        # chat, and the screen that asks for it has no way to say where it
+        # went — or to offer a way there — unless it is told. A reader whose
+        # number is already linked sees no bot, no button and no explanation,
+        # and reasonably concludes nothing happened.
+        return Response({
+            'detail': 'Код отправлен.',
+            'phone': phone,
+            'telegram_deep_link': telegram_deep_link(phone),
+        })
 
 
 class VerifyOTPView(APIView):
