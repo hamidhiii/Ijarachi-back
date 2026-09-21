@@ -12,7 +12,16 @@ WELCOME_TEXT = (
     'Нажмите кнопку ниже и поделитесь своим номером телефона — '
     'мы будем присылать сюда код подтверждения вместо SMS.'
 )
-LINKED_TEXT = 'Номер {phone} подтверждён. Код подтверждения отправлен ниже 👇'
+LINKED_TEXT = (
+    'Номер {phone} подтверждён. Код подтверждения отправлен ниже 👇\n\n'
+    'Вводите код на сайте для этого же номера — код выдан именно ему.'
+)
+CODE_SENT_TEXT = 'Номер {phone} уже подтверждён. Код подтверждения отправлен ниже 👇'
+CONFIRM_PHONE_TEXT = (
+    'Чтобы получить код для номера {phone}, подтвердите, что он ваш: '
+    'нажмите кнопку ниже и поделитесь номером телефона.\n\n'
+    'Если это не ваш номер — вернитесь в приложение и введите свой.'
+)
 PHONE_MISMATCH_TEXT = (
     'Этот номер телефона не привязан ни к одной попытке входа в Rentoo. '
     'Откройте приложение, введите номер и повторите отправку кода.'
@@ -48,13 +57,32 @@ def send_telegram_message(chat_id: int, text: str, reply_markup: dict | None = N
         return False
 
 
-def send_contact_request(chat_id: int) -> bool:
+def send_contact_request(chat_id: int, text: str = WELCOME_TEXT) -> bool:
     keyboard = {
         'keyboard': [[{'text': '📱 Отправить номер телефона', 'request_contact': True}]],
         'resize_keyboard': True,
         'one_time_keyboard': True,
     }
-    return send_telegram_message(chat_id, WELCOME_TEXT, reply_markup=keyboard)
+    return send_telegram_message(chat_id, text, reply_markup=keyboard)
+
+
+def parse_start_payload(text: str) -> str | None:
+    """The phone carried by a `/start <payload>` deep link, or None.
+
+    The payload is whatever the link said, which is whatever the browser sent —
+    so it is a *request*, never a proof. It is used to address the reader
+    ('код для номера +998…') and to recognise a chat that has already proved it
+    owns that number. It must never be enough on its own to link a chat or to
+    release a code: anyone can put somebody else's number in a URL.
+    """
+    parts = (text or '').split(maxsplit=1)
+    if len(parts) < 2:
+        return None
+    try:
+        from .serializers import normalize_uz_phone
+        return normalize_uz_phone(parts[1])
+    except Exception:
+        return None
 
 
 def get_telegram_link(phone: str) -> TelegramLink | None:
