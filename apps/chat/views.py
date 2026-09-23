@@ -81,11 +81,11 @@ class ConversationListCreateView(APIView):
         try:
             item = Item.objects.select_related('owner').get(pk=listing_id, status=Item.STATUS_APPROVED)
         except Item.DoesNotExist:
-            return Response({'detail': 'Объявление не найдено.'}, status=status.HTTP_404_NOT_FOUND)
+            return Response({'code': 'listing_not_found', 'detail': 'Объявление не найдено.'}, status=status.HTTP_404_NOT_FOUND)
 
         if item.owner_id == request.user.id:
             return Response(
-                {'detail': 'Нельзя открыть диалог по собственному объявлению.'},
+                {'code': 'own_listing_chat', 'detail': 'Нельзя открыть диалог по собственному объявлению.'},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
@@ -98,7 +98,7 @@ class ConversationListCreateView(APIView):
             open_count = Conversation.objects.filter(participants=request.user, deal__isnull=True).count()
             if open_count >= max_open:
                 return Response(
-                    {'detail': f'Превышен лимит открытых диалогов без сделки ({max_open}).'},
+                    {'code': 'open_inquiries_limit', 'detail': f'Превышен лимит открытых диалогов без сделки ({max_open}).'},
                     status=status.HTTP_429_TOO_MANY_REQUESTS,
                 )
             conversation = Conversation.objects.create(listing=item)
@@ -119,12 +119,12 @@ class ConversationListCreateView(APIView):
         try:
             deal = Booking.objects.select_related('item__owner', 'renter').get(pk=deal_id)
         except Booking.DoesNotExist:
-            return Response({'detail': 'Сделка не найдена.'}, status=status.HTTP_404_NOT_FOUND)
+            return Response({'code': 'deal_not_found', 'detail': 'Сделка не найдена.'}, status=status.HTTP_404_NOT_FOUND)
 
         if request.user not in [deal.renter, deal.item.owner]:
-            return Response({'detail': 'Нет доступа к сделке.'}, status=status.HTTP_403_FORBIDDEN)
+            return Response({'code': 'deal_access_denied', 'detail': 'Нет доступа к сделке.'}, status=status.HTTP_403_FORBIDDEN)
         if deal.status not in self.PAID_STATUSES:
-            return Response({'detail': 'Чат открывается после оплаты сделки'}, status=status.HTTP_403_FORBIDDEN)
+            return Response({'code': 'deal_not_paid', 'detail': 'Чат открывается после оплаты сделки'}, status=status.HTTP_403_FORBIDDEN)
 
         conversation = Conversation.objects.filter(deal=deal).first()
         created = False

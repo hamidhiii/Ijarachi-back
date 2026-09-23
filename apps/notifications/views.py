@@ -1,12 +1,34 @@
+from django.conf import settings
 from drf_spectacular.utils import extend_schema, extend_schema_view
-from rest_framework import generics, status
-from rest_framework.permissions import IsAuthenticated
+from rest_framework import generics, serializers, status
+from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from core.schema import DetailSerializer
 from .models import Notification, PushSubscription
 from .serializers import NotificationSerializer, PushSubscriptionSerializer, PushUnsubscribeSerializer
+
+
+class VapidKeyResponseSerializer(serializers.Serializer):
+    public_key = serializers.CharField(allow_blank=True)
+
+
+@extend_schema(
+    responses={200: VapidKeyResponseSerializer},
+    summary='Публичный VAPID-ключ для Web Push',
+    description=(
+        'Отдаёт applicationServerKey для PushManager.subscribe() на фронте. '
+        'Не секрет — приватная половина ключа остаётся только на сервере. '
+        'Пустая строка, если VAPID ещё не сгенерирован (manage.py generate_vapid_keys): '
+        'в этом случае подписываться пока не на что.'
+    ),
+)
+class VapidKeyView(APIView):
+    permission_classes = [AllowAny]
+
+    def get(self, request):
+        return Response({'public_key': settings.VAPID_PUBLIC_KEY})
 
 
 class NotificationListView(generics.ListAPIView):

@@ -48,9 +48,9 @@ class ChatConsumer(AsyncJsonWebsocketConsumer):
         message = Message.objects.create(conversation=conversation, sender=user, text=text)
         conversation.save(update_fields=['updated_at'])
         try:
-            full_name = user.profile.full_name or user.phone
+            full_name = user.profile.full_name
         except Exception:
-            full_name = user.phone
+            full_name = ''
         return {
             'id': message.pk,
             'conversation': conversation.pk,

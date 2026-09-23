@@ -39,6 +39,7 @@ class SendOTPView(APIView):
 
         if telegram_link_required(phone):
             return Response({
+                'code': 'telegram_link_required',
                 'detail': 'Подтвердите номер в Telegram-боте, чтобы получить код.',
                 'telegram_required': True,
                 'telegram_deep_link': telegram_deep_link(phone),
@@ -54,7 +55,7 @@ class SendOTPView(APIView):
         ).exists()
         if recent:
             return Response(
-                {'detail': f'Подождите {cooldown} секунд перед повторной отправкой.'},
+                {'code': 'otp_cooldown', 'detail': f'Подождите {cooldown} секунд перед повторной отправкой.', 'cooldown_seconds': cooldown},
                 status=status.HTTP_429_TOO_MANY_REQUESTS,
             )
 
@@ -64,7 +65,7 @@ class SendOTPView(APIView):
         sent = send_otp(phone, code)
         if not sent:
             return Response(
-                {'detail': 'Не удалось отправить код. Попробуйте позже.'},
+                {'code': 'otp_send_failed', 'detail': 'Не удалось отправить код. Попробуйте позже.'},
                 status=status.HTTP_503_SERVICE_UNAVAILABLE,
             )
 
@@ -75,6 +76,7 @@ class SendOTPView(APIView):
         # number is already linked sees no bot, no button and no explanation,
         # and reasonably concludes nothing happened.
         return Response({
+            'code': 'otp_sent',
             'detail': 'Код отправлен.',
             'phone': phone,
             'telegram_deep_link': telegram_deep_link(phone),
@@ -212,6 +214,7 @@ class PhoneChangeSendView(APIView):
 
         if telegram_link_required(new_phone):
             return Response({
+                'code': 'telegram_link_required',
                 'detail': 'Подтвердите новый номер в Telegram-боте, чтобы получить код.',
                 'telegram_required': True,
                 'telegram_deep_link': telegram_deep_link(new_phone),
@@ -226,13 +229,16 @@ class PhoneChangeSendView(APIView):
             is_used=False,
         ).exists()
         if recent:
-            return Response({'detail': f'Подождите {cooldown} секунд перед повторной отправкой.'}, status=status.HTTP_429_TOO_MANY_REQUESTS)
+            return Response(
+                {'code': 'otp_cooldown', 'detail': f'Подождите {cooldown} секунд перед повторной отправкой.', 'cooldown_seconds': cooldown},
+                status=status.HTTP_429_TOO_MANY_REQUESTS,
+            )
 
         code = generate_otp()
         PhoneChangeRequest.objects.create(user=request.user, new_phone=new_phone, code=code)
         if not send_otp(new_phone, code):
-            return Response({'detail': 'Не удалось отправить код.'}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
-        return Response({'detail': 'Код отправлен.', 'new_phone': new_phone})
+            return Response({'code': 'otp_send_failed', 'detail': 'Не удалось отправить код.'}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+        return Response({'code': 'otp_sent', 'detail': 'Код отправлен.', 'new_phone': new_phone})
 
 
 class PhoneChangeVerifyView(APIView):
