@@ -152,13 +152,13 @@ class AdminUserBlockView(APIView):
 
         if int(pk) == request.user.pk:
             return Response(
-                {'detail': 'Нельзя заблокировать собственный аккаунт.'},
+                {'code': 'cannot_block_self', 'detail': 'Нельзя заблокировать собственный аккаунт.'},
                 status=status.HTTP_400_BAD_REQUEST,
             )
         try:
             user = CustomUser.objects.select_related('profile').get(pk=pk)
         except CustomUser.DoesNotExist:
-            return Response({'detail': 'Пользователь не найден.'}, status=status.HTTP_404_NOT_FOUND)
+            return Response({'code': 'user_not_found', 'detail': 'Пользователь не найден.'}, status=status.HTTP_404_NOT_FOUND)
 
         serializer = AdminUserStatusSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)

@@ -162,7 +162,7 @@ class BookingCreateView(generics.CreateAPIView):
             avail, _ = ItemAvailability.objects.select_for_update().get_or_create(item=item)
             if not avail.is_available(start, end):
                 return Response(
-                    {'detail': 'Выбранные даты уже заняты. Попробуйте другие.'},
+                    {'code': 'DATES_UNAVAILABLE', 'detail': 'Выбранные даты уже заняты. Попробуйте другие.'},
                     status=status.HTTP_409_CONFLICT,
                 )
             booking = serializer.save()
@@ -339,16 +339,18 @@ class ConfirmReturnView(APIView):
         try:
             deal = Booking.objects.select_related('item__owner', 'renter').get(pk=pk, renter=request.user)
         except Booking.DoesNotExist:
-            return Response({'detail': 'Сделка не найдена.'}, status=status.HTTP_404_NOT_FOUND)
+            return Response({'code': 'deal_not_found', 'detail': 'Сделка не найдена.'}, status=status.HTTP_404_NOT_FOUND)
 
         if deal.status != Booking.STATUS_IN_PROGRESS:
-            return Response({'detail': 'Возврат можно подтвердить только для активной сделки.'}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({'code': 'return_not_allowed', 'detail': 'Возврат можно подтвердить только для активной сделки.'}, status=status.HTTP_400_BAD_REQUEST)
 
         try:
             require_handover_photo(deal, Booking.STATUS_RETURNED)
         except ValidationError as exc:
-            return Response({'detail': exc.detail[0] if isinstance(exc.detail, list) else exc.detail},
-                            status=status.HTTP_400_BAD_REQUEST)
+            return Response(
+                {'code': 'handover_photo_required', 'detail': exc.detail[0] if isinstance(exc.detail, list) else exc.detail},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
         deal.status = Booking.STATUS_RETURNED
         deal.returned_at = timezone.now()
@@ -366,12 +368,12 @@ class DisputeView(APIView):
         try:
             deal = Booking.objects.select_related('item__owner', 'renter').get(pk=pk)
         except Booking.DoesNotExist:
-            return Response({'detail': 'Сделка не найдена.'}, status=status.HTTP_404_NOT_FOUND)
+            return Response({'code': 'deal_not_found', 'detail': 'Сделка не найдена.'}, status=status.HTTP_404_NOT_FOUND)
 
         if request.user not in [deal.renter, deal.item.owner]:
-            return Response({'detail': 'Нет доступа к этой сделке.'}, status=status.HTTP_403_FORBIDDEN)
+            return Response({'code': 'deal_access_denied', 'detail': 'Нет доступа к этой сделке.'}, status=status.HTTP_403_FORBIDDEN)
         if deal.status not in [Booking.STATUS_PAID, Booking.STATUS_IN_PROGRESS, Booking.STATUS_RETURNED]:
-            return Response({'detail': 'Спор нельзя открыть в текущем статусе.'}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({'code': 'dispute_not_allowed', 'detail': 'Спор нельзя открыть в текущем статусе.'}, status=status.HTTP_400_BAD_REQUEST)
 
         deal.status = Booking.STATUS_DISPUTED
         deal.escrow_status = Booking.ESCROW_FROZEN
@@ -405,14 +407,14 @@ class DealReviewView(APIView):
         try:
             deal = Booking.objects.select_related('item__owner', 'renter').get(pk=pk)
         except Booking.DoesNotExist:
-            return Response({'detail': 'Сделка не найдена.'}, status=status.HTTP_404_NOT_FOUND)
+            return Response({'code': 'deal_not_found', 'detail': 'Сделка не найдена.'}, status=status.HTTP_404_NOT_FOUND)
 
         if request.user not in [deal.renter, deal.item.owner]:
-            return Response({'detail': 'Нет доступа к этой сделке.'}, status=status.HTTP_403_FORBIDDEN)
+            return Response({'code': 'deal_access_denied', 'detail': 'Нет доступа к этой сделке.'}, status=status.HTTP_403_FORBIDDEN)
         if deal.status not in [Booking.STATUS_COMPLETED, Booking.STATUS_RETURNED]:
-            return Response({'detail': 'Отзыв можно оставить после завершения или подтверждения возврата.'}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({'code': 'review_not_allowed', 'detail': 'Отзыв можно оставить после завершения или подтверждения возврата.'}, status=status.HTTP_400_BAD_REQUEST)
         if deal.reviews.filter(reviewer=request.user).exists():
-            return Response({'detail': 'Вы уже оставили отзыв по этой сделке.'}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({'code': 'review_already_exists', 'detail': 'Вы уже оставили отзыв по этой сделке.'}, status=status.HTTP_400_BAD_REQUEST)
 
         serializer = DealReviewSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
@@ -478,12 +480,12 @@ class BookingPhotoUploadView(APIView):
         try:
             deal = Booking.objects.select_related('item__owner', 'renter').get(pk=pk)
         except Booking.DoesNotExist:
-            return Response({'detail': 'Сделка не найдена.'}, status=status.HTTP_404_NOT_FOUND)
+            return Response({'code': 'deal_not_found', 'detail': 'Сделка не найдена.'}, status=status.HTTP_404_NOT_FOUND)
 
         if request.user not in [deal.renter, deal.item.owner]:
-            return Response({'detail': 'Нет доступа к этой сделке.'}, status=status.HTTP_403_FORBIDDEN)
+            return Response({'code': 'deal_access_denied', 'detail': 'Нет доступа к этой сделке.'}, status=status.HTTP_403_FORBIDDEN)
         if deal.status not in self.ALLOWED_STATUSES:
-            return Response({'detail': 'Фото можно добавить только после оплаты сделки.'}, status=status.HTTP_403_FORBIDDEN)
+            return Response({'code': 'deal_not_paid', 'detail': 'Фото можно добавить только после оплаты сделки.'}, status=status.HTTP_403_FORBIDDEN)
 
         serializer = BookingPhotoSerializer(data=request.data, context={'request': request})
         serializer.is_valid(raise_exception=True)
@@ -534,7 +536,7 @@ class BookingStatusUpdateView(APIView):
         try:
             booking = Booking.objects.select_related('item__owner', 'renter').get(pk=pk)
         except Booking.DoesNotExist:
-            return Response({'detail': 'Сделка не найдена.'}, status=status.HTTP_404_NOT_FOUND)
+            return Response({'code': 'deal_not_found', 'detail': 'Сделка не найдена.'}, status=status.HTTP_404_NOT_FOUND)
 
         serializer = BookingStatusUpdateSerializer(
             data=request.data,
