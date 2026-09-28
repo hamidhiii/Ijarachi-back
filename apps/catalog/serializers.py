@@ -2,8 +2,9 @@ from drf_spectacular.utils import extend_schema_field
 from rest_framework import serializers
 from django.utils.dateparse import parse_date
 
-from .models import Category, Favorite, Item, ItemImage, ItemAvailability
-from core.schema import OwnerMiniSerializer
+from .models import Category, Favorite, Item, ItemImage, ItemAvailability, Offer
+from core.schema import OwnerMiniSerializer, UserMiniSerializer
+from apps.bookings.serializers import _serialize_listing_mini, _serialize_user_mini
 
 
 class CategorySerializer(serializers.ModelSerializer):
@@ -282,4 +283,60 @@ class FavoriteCreateSerializer(serializers.Serializer):
         except Item.DoesNotExist:
             raise serializers.ValidationError({'listing_id': 'Listing not found.'})
         attrs['item'] = item
+        return attrs
+
+
+# ─── Offers (торг) ─────────────────────────────────────────────────────────
+
+class OfferSerializer(serializers.ModelSerializer):
+    """
+    One row of a negotiation thread. Read-heavy: everything but `amount` on
+    write is filled in by the view (`item` from the URL, `renter` from the
+    request, `status`/`proposed_by` by whichever side is acting) — a client
+    posting its own status would let a renter mark their own offer accepted.
+    """
+    item_title = serializers.CharField(source='item.title', read_only=True)
+    item_image = serializers.SerializerMethodField()
+    renter_info = serializers.SerializerMethodField()
+    owner_id = serializers.IntegerField(source='item.owner_id', read_only=True)
+    listed_price = serializers.DecimalField(source='item.price_per_day', max_digits=12, decimal_places=0, read_only=True)
+
+    class Meta:
+        model = Offer
+        fields = [
+            'id', 'item', 'item_title', 'item_image', 'listed_price',
+            'renter', 'renter_info', 'owner_id',
+            'amount', 'status', 'proposed_by', 'created_at',
+        ]
+        read_only_fields = ['id', 'renter', 'status', 'proposed_by', 'created_at']
+
+    @extend_schema_field(serializers.URLField(allow_null=True))
+    def get_item_image(self, obj):
+        image = obj.item.primary_image
+        if not image:
+            return None
+        request = self.context.get('request')
+        return request.build_absolute_uri(image.image.url) if request else image.image.url
+
+    @extend_schema_field(UserMiniSerializer)
+    def get_renter_info(self, obj):
+        return _serialize_user_mini(obj.renter)
+
+
+class OfferRespondSerializer(serializers.Serializer):
+    """
+    POST /offers/{id}/respond/. `amount` required only for `counter` — the
+    view checks that, not this serializer, since the rule depends on `action`.
+    """
+    ACTION_ACCEPT = 'accept'
+    ACTION_REJECT = 'reject'
+    ACTION_COUNTER = 'counter'
+    ACTION_CHOICES = [ACTION_ACCEPT, ACTION_REJECT, ACTION_COUNTER]
+
+    action = serializers.ChoiceField(choices=ACTION_CHOICES)
+    amount = serializers.DecimalField(max_digits=12, decimal_places=0, required=False)
+
+    def validate(self, attrs):
+        if attrs['action'] == self.ACTION_COUNTER and not attrs.get('amount'):
+            raise serializers.ValidationError({'amount': 'Укажите цену встречного предложения.'})
         return attrs

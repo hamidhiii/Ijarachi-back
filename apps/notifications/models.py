@@ -7,12 +7,14 @@ class Notification(models.Model):
     TYPE_PAYMENT = 'payment'
     TYPE_CHAT = 'chat'
     TYPE_SYSTEM = 'system'
+    TYPE_OFFER = 'offer'
 
     TYPE_CHOICES = [
         (TYPE_DEAL, 'Deal'),
         (TYPE_PAYMENT, 'Payment'),
         (TYPE_CHAT, 'Chat'),
         (TYPE_SYSTEM, 'System'),
+        (TYPE_OFFER, 'Offer'),
     ]
 
     user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='notifications')

@@ -15,6 +15,8 @@ from .views import (
     MyItemsView,
     ItemUpdateView,
     ItemImageUploadView,
+    OfferListCreateView,
+    OfferRespondView,
 )
 
 urlpatterns = [
@@ -41,4 +43,6 @@ urlpatterns = [
     path('items/<int:pk>/', ItemUpdateView.as_view(), name='item-update'),
     path('items/<int:item_id>/images/', ItemImageUploadView.as_view(), name='item-image-upload'),
     path('items/<int:item_id>/images/<int:image_id>/', ItemImageUploadView.as_view(), name='item-image-delete'),
+    path('offers/', OfferListCreateView.as_view(), name='offer-list-create'),
+    path('offers/<int:pk>/respond/', OfferRespondView.as_view(), name='offer-respond'),
 ]

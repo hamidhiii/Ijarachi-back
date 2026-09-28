@@ -1,6 +1,6 @@
 from django.contrib import admin
 from mptt.admin import DraggableMPTTAdmin
-from .models import Category, Favorite, Item, ItemImage, ItemAvailability
+from .models import Category, Favorite, Item, ItemImage, ItemAvailability, Offer
 
 
 @admin.register(Category)
@@ -69,3 +69,11 @@ class FavoriteAdmin(admin.ModelAdmin):
     list_display = ['id', 'user', 'item', 'created_at']
     search_fields = ['user__phone', 'item__title']
     raw_id_fields = ['user', 'item']
+
+
+@admin.register(Offer)
+class OfferAdmin(admin.ModelAdmin):
+    list_display = ['id', 'item', 'renter', 'amount', 'status', 'proposed_by', 'created_at']
+    list_filter = ['status', 'proposed_by']
+    search_fields = ['item__title', 'renter__phone']
+    raw_id_fields = ['item', 'renter']

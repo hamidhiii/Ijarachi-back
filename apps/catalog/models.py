@@ -204,3 +204,58 @@ class Favorite(models.Model):
 
     def __str__(self):
         return f'{self.user_id} -> {self.item_id}'
+
+
+class Offer(models.Model):
+    """
+    A price negotiation thread for one (item, renter) pair.
+
+    One row per proposal rather than one mutable row per pair: `respond`
+    always writes a new row, so the back-and-forth stays a readable history
+    instead of a single value overwritten in place. Which row is "current"
+    is just the latest one for that pair — see `Item.current_offer_for` on
+    the queryset side (views.py), not modelled here.
+    """
+    STATUS_PENDING = 'pending'
+    STATUS_ACCEPTED = 'accepted'
+    STATUS_REJECTED = 'rejected'
+    STATUS_WITHDRAWN = 'withdrawn'
+
+    STATUS_CHOICES = [
+        (STATUS_PENDING, 'Ожидает ответа'),
+        (STATUS_ACCEPTED, 'Принято'),
+        (STATUS_REJECTED, 'Отклонено'),
+        (STATUS_WITHDRAWN, 'Снято предложением'),
+    ]
+
+    PROPOSER_RENTER = 'renter'
+    PROPOSER_OWNER = 'owner'
+    PROPOSER_CHOICES = [
+        (PROPOSER_RENTER, 'Арендатор'),
+        (PROPOSER_OWNER, 'Владелец'),
+    ]
+
+    item = models.ForeignKey(Item, on_delete=models.CASCADE, related_name='offers', verbose_name='Объявление')
+    # Denormalised onto every row (not just derivable via item.owner) because
+    # the owner side of a thread is looked up by "offers I received" — a
+    # query that would otherwise join through Item on every request.
+    renter = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.CASCADE,
+        related_name='price_offers', verbose_name='Арендатор',
+    )
+    amount = models.DecimalField('Предложенная цена за сутки (сум)', max_digits=12, decimal_places=0)
+    status = models.CharField('Статус', max_length=20, choices=STATUS_CHOICES, default=STATUS_PENDING)
+    # Whoever proposed `amount` — the other side is who gets to respond.
+    proposed_by = models.CharField('Кто предложил', max_length=10, choices=PROPOSER_CHOICES, default=PROPOSER_RENTER)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        verbose_name = 'Предложение цены'
+        verbose_name_plural = 'Предложения цены'
+        ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['item', 'renter', '-created_at']),
+        ]
+
+    def __str__(self):
+        return f'{self.item_id} · {self.renter_id} · {self.amount} ({self.status})'

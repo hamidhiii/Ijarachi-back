@@ -9,7 +9,9 @@ from django.db.models import F, Q, Count
 from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework.filters import SearchFilter, OrderingFilter
 
-from .models import Category, Favorite, Item, ItemImage, ItemAvailability
+from rest_framework.exceptions import NotFound, ValidationError
+
+from .models import Category, Favorite, Item, ItemImage, ItemAvailability, Offer
 from .serializers import (
     CategorySerializer,
     ItemListSerializer,
@@ -21,6 +23,8 @@ from .serializers import (
     FavoriteCreateSerializer,
     ListingAvailabilitySerializer,
     ListingModerationSerializer,
+    OfferSerializer,
+    OfferRespondSerializer,
 )
 from .filters import ItemFilter, filter_by_attributes
 
@@ -389,3 +393,129 @@ class ItemImageUploadView(APIView):
                 first.save(update_fields=['is_primary'])
 
         return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+# ─── Offers (торг) ─────────────────────────────────────────────────────────
+
+def _notify_offer(user, offer, title, message):
+    """Best-effort: a failed notification must not fail the offer itself."""
+    try:
+        from apps.notifications.models import Notification
+        from apps.notifications.tasks import create_notification
+
+        create_notification(user, Notification.TYPE_OFFER, {
+            'title': title,
+            'message': message,
+            'item_id': offer.item_id,
+            'offer_id': offer.id,
+            'link': f'/product/{offer.item_id}?offer={offer.id}',
+        })
+    except Exception:
+        logger.exception('Failed to notify about offer #%s', offer.id)
+
+
+class OfferListCreateView(generics.ListCreateAPIView):
+    """
+    GET — the caller's own offer threads: `?role=owner` for offers received
+    on their listings, otherwise offers they made as a renter. `?item=<id>`
+    narrows to one listing's thread.
+
+    POST — a renter's opening bid on an item marked `is_negotiable`. Always a
+    new row: the thread is the full history of one (item, renter) pair, not
+    a single value overwritten in place.
+    """
+    serializer_class = OfferSerializer
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get_queryset(self):
+        qs = Offer.objects.select_related('item', 'item__owner', 'renter', 'renter__profile')
+        if self.request.query_params.get('role') == 'owner':
+            qs = qs.filter(item__owner=self.request.user)
+        else:
+            qs = qs.filter(renter=self.request.user)
+        item_id = self.request.query_params.get('item')
+        if item_id:
+            qs = qs.filter(item_id=item_id)
+        return qs
+
+    def perform_create(self, serializer):
+        item_id = self.request.data.get('item')
+        try:
+            item = Item.objects.select_related('owner').get(pk=item_id, status=Item.STATUS_APPROVED)
+        except (Item.DoesNotExist, ValueError, TypeError):
+            raise NotFound('Объявление не найдено.')
+        if item.owner_id == self.request.user.id:
+            raise ValidationError('Нельзя предложить цену на собственное объявление.')
+        if not item.is_negotiable:
+            raise ValidationError('Владелец не отметил это объявление как готовое к торгу.')
+
+        offer = serializer.save(
+            item=item, renter=self.request.user,
+            proposed_by=Offer.PROPOSER_RENTER, status=Offer.STATUS_PENDING,
+        )
+        _notify_offer(
+            item.owner, offer, 'Новое предложение цены',
+            f'{offer.amount:.0f} сум/сутки за «{item.title}»',
+        )
+
+
+class OfferRespondView(APIView):
+    """
+    POST /offers/{id}/respond/ — accept, reject, or counter the thread's
+    current (pending) offer. Only the side that did NOT make that last
+    proposal may act on it — a renter cannot accept their own bid.
+
+    `counter` closes the old row (withdrawn) and opens a new pending one at
+    the countered amount, `proposed_by` the acting side — so accept/reject
+    always resolve exactly the row currently on the table.
+    """
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request, pk):
+        try:
+            offer = Offer.objects.select_related('item', 'item__owner', 'renter').get(pk=pk)
+        except Offer.DoesNotExist:
+            return Response({'detail': 'Предложение не найдено.'}, status=status.HTTP_404_NOT_FOUND)
+
+        is_owner = offer.item.owner_id == request.user.id
+        is_renter = offer.renter_id == request.user.id
+        if not (is_owner or is_renter):
+            return Response({'detail': 'Нет доступа.'}, status=status.HTTP_403_FORBIDDEN)
+
+        if offer.status != Offer.STATUS_PENDING:
+            return Response({'detail': 'По этому предложению уже есть ответ.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        my_role = Offer.PROPOSER_OWNER if is_owner else Offer.PROPOSER_RENTER
+        if offer.proposed_by == my_role:
+            return Response(
+                {'detail': 'Ждём ответа второй стороны на ваше предложение.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        serializer = OfferRespondSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        action = serializer.validated_data['action']
+        other_user = offer.renter if is_owner else offer.item.owner
+
+        if action == OfferRespondSerializer.ACTION_ACCEPT:
+            offer.status = Offer.STATUS_ACCEPTED
+            offer.save(update_fields=['status'])
+            _notify_offer(other_user, offer, 'Предложение принято', f'{offer.amount:.0f} сум/сутки — договорились')
+        elif action == OfferRespondSerializer.ACTION_REJECT:
+            offer.status = Offer.STATUS_REJECTED
+            offer.save(update_fields=['status'])
+            _notify_offer(other_user, offer, 'Предложение отклонено', f'По «{offer.item.title}» — отказ')
+        else:
+            offer.status = Offer.STATUS_WITHDRAWN
+            offer.save(update_fields=['status'])
+            offer = Offer.objects.create(
+                item=offer.item, renter=offer.renter,
+                amount=serializer.validated_data['amount'],
+                proposed_by=my_role, status=Offer.STATUS_PENDING,
+            )
+            _notify_offer(
+                other_user, offer, 'Встречное предложение',
+                f'{offer.amount:.0f} сум/сутки за «{offer.item.title}»',
+            )
+
+        return Response(OfferSerializer(offer, context={'request': request}).data)
