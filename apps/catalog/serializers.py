@@ -74,9 +74,16 @@ def validate_item_attributes(value):
 def _serialize_owner(item, request):
     try:
         profile = item.owner.profile
+        avatar = None
+        if profile.avatar:
+            avatar = request.build_absolute_uri(profile.avatar.url) if request else profile.avatar.url
         return {
             'id': item.owner.id,
             'full_name': profile.full_name,
+            # Название магазина — то, под чем продавец показывается на карточках;
+            # пустое, пока он его не задал (тогда клиент берёт full_name).
+            'shop_name': profile.shop_name,
+            'avatar': avatar,
             'rating': profile.rating,
             'verified': bool(profile.is_verified_kyc),
         }

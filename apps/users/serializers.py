@@ -60,6 +60,7 @@ class ProfileSerializer(serializers.ModelSerializer):
         model = Profile
         fields = [
             'id', 'phone', 'email', 'full_name', 'avatar',
+            'shop_name', 'about', 'location',
             'rating', 'verified', 'role',
             'notify_telegram', 'telegram_connected', 'telegram_deep_link',
             # Доп. поля для обратной совместимости с мобильным клиентом.
@@ -113,12 +114,18 @@ class PublicUserSerializer(serializers.ModelSerializer):
     role = serializers.SerializerMethodField()
     is_verified_kyc = serializers.SerializerMethodField()
     verification_status = serializers.SerializerMethodField()
+    shop_name = serializers.SerializerMethodField()
+    about = serializers.SerializerMethodField()
+    location = serializers.SerializerMethodField()
 
     class Meta:
         model = User
         fields = [
             'id',
             'full_name',
+            'shop_name',
+            'about',
+            'location',
             'avatar',
             'rating',
             'verified',
@@ -130,6 +137,18 @@ class PublicUserSerializer(serializers.ModelSerializer):
             'date_joined',
         ]
         read_only_fields = fields
+
+    @extend_schema_field(serializers.CharField())
+    def get_shop_name(self, obj):
+        return getattr(getattr(obj, 'profile', None), 'shop_name', '') or ''
+
+    @extend_schema_field(serializers.CharField())
+    def get_about(self, obj):
+        return getattr(getattr(obj, 'profile', None), 'about', '') or ''
+
+    @extend_schema_field(serializers.CharField())
+    def get_location(self, obj):
+        return getattr(getattr(obj, 'profile', None), 'location', '') or ''
 
     @extend_schema_field(serializers.URLField(allow_null=True))
     def get_avatar(self, obj):

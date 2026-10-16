@@ -55,6 +55,11 @@ class Profile(models.Model):
     user = models.OneToOneField(CustomUser, on_delete=models.CASCADE, related_name='profile')
     full_name = models.CharField('ФИО', max_length=200, blank=True)
     avatar = models.ImageField('Аватар', upload_to='avatars/', blank=True, null=True)
+    # Витрина продавца: то, что видят арендаторы на карточках и на публичной
+    # странице. Всё необязательно — без названия магазина показывается имя.
+    shop_name = models.CharField('Название магазина / ник', max_length=60, blank=True)
+    about = models.TextField('О себе', max_length=500, blank=True)
+    location = models.CharField('Локация магазина', max_length=120, blank=True)
     rating = models.FloatField('Рейтинг', default=0.0)
     rating_count = models.PositiveIntegerField('Кол-во оценок', default=0)
     wallet_balance = models.DecimalField('Баланс (сум)', max_digits=14, decimal_places=0, default=0)
