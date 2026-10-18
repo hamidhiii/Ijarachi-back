@@ -20,14 +20,14 @@ class Booking(models.Model):
     STATUS_ACTIVE = STATUS_IN_PROGRESS
 
     STATUS_CHOICES = [
-        (STATUS_DRAFT, 'Draft'),
-        (STATUS_PENDING_PAYMENT, 'Pending payment'),
-        (STATUS_PAID, 'Paid'),
-        (STATUS_IN_PROGRESS, 'In progress'),
-        (STATUS_RETURNED, 'Returned'),
-        (STATUS_COMPLETED, 'Completed'),
-        (STATUS_CANCELLED, 'Cancelled'),
-        (STATUS_DISPUTED, 'Disputed'),
+        (STATUS_DRAFT, 'Черновик'),
+        (STATUS_PENDING_PAYMENT, 'Ждёт оплату'),
+        (STATUS_PAID, 'Оплачено'),
+        (STATUS_IN_PROGRESS, 'Аренда идёт'),
+        (STATUS_RETURNED, 'Возвращено'),
+        (STATUS_COMPLETED, 'Завершено'),
+        (STATUS_CANCELLED, 'Отменено'),
+        (STATUS_DISPUTED, 'Спор'),
     ]
 
     # Публичный словарь статусов, который ожидает фронтенд:
@@ -65,11 +65,11 @@ class Booking(models.Model):
     ESCROW_NONE = 'none'
 
     ESCROW_CHOICES = [
-        (ESCROW_PENDING, 'Pending'),
-        (ESCROW_HELD, 'Held'),
-        (ESCROW_RELEASED, 'Released'),
-        (ESCROW_REFUNDED, 'Refunded'),
-        (ESCROW_FROZEN, 'Frozen'),
+        (ESCROW_PENDING, 'Ожидает удержания'),
+        (ESCROW_HELD, 'Удержано'),
+        (ESCROW_RELEASED, 'Выплачено владельцу'),
+        (ESCROW_REFUNDED, 'Возвращено арендатору'),
+        (ESCROW_FROZEN, 'Заморожено'),
         (ESCROW_NONE, 'Без эскроу (наличные)'),
     ]
 

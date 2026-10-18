@@ -62,8 +62,15 @@
 
 {% if request.monitor_access.can_view_errors %}
   <h2>Требует внимания</h2>
-  {% if checks %}
+  {% if checks or stuck_total %}
     <div class="checks">
+      {% if stuck_total %}
+        <div class="panel">
+          <span class="tag warn">{{ stuck_total }}</span>
+          <strong>Застрявшие сделки</strong>
+          <div class="muted">Сделка слишком долго в одном статусе или даты аренды прошли, а статус не сменился.{% if request.monitor_access.can_view_deals %} <a href="{% url 'monitor:stuck' %}">Разобрать</a>{% endif %}</div>
+        </div>
+      {% endif %}
       {% for check in checks %}
         <div class="panel">
           <span class="tag {% if check.severity == 'error' %}error{% else %}warn{% endif %}">{{ check.total }}</span>
