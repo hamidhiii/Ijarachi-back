@@ -7,6 +7,7 @@ from drf_spectacular.views import (
     SpectacularSwaggerView,
     SpectacularRedocView,
 )
+from apps.monitoring.api import TrackView
 from .views import AdminDashboardView, AdminFinanceExportView, AdminUserBlockView
 
 urlpatterns = [
@@ -14,6 +15,7 @@ urlpatterns = [
     path('monitor/', include('apps.monitoring.urls')),
 
     # API v1
+    path('api/v1/analytics/track/', TrackView.as_view(), name='analytics-track'),
     path('api/v1/auth/', include('apps.users.urls.auth')),
     path('api/v1/telegram/', include('apps.users.urls.telegram')),
     path('api/v1/', include('apps.users.urls.profile')),

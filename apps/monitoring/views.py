@@ -246,3 +246,93 @@ def access_edit(request, pk):
         'access': access,
         'title': f'Доступ: {access.user.phone}',
     })
+
+
+@monitor_required('can_view_errors')
+def auth_funnel(request):
+    """Вход и регистрация: сколько пришло, сколько дошло, где споткнулись, кто ушёл молча."""
+    from .models import AuthEvent
+
+    days = {'1': 1, '7': 7, '30': 30}.get(request.GET.get('days'), 7)
+    since = timezone.now() - timedelta(days=days)
+    rows = list(
+        AuthEvent.objects.filter(created_at__gte=since)
+        .order_by('created_at')
+        .values_list('event', 'phone', 'visitor_id', 'detail', 'created_at')
+    )
+
+    by_event = {}
+    phones_by_event = {}
+    visitors_by_event = {}
+    for event, phone, visitor, _detail, _at in rows:
+        by_event[event] = by_event.get(event, 0) + 1
+        if phone:
+            phones_by_event.setdefault(event, set()).add(phone)
+        if visitor:
+            visitors_by_event.setdefault(event, set()).add(visitor)
+
+    def phones(*events_):
+        return set().union(*(phones_by_event.get(e, set()) for e in events_))
+
+    done_phones = phones(AuthEvent.LOGIN_OK, AuthEvent.REGISTER_OK)
+    code_not_entered = phones(AuthEvent.OTP_SENT) - done_phones
+    never_got_code = (
+        phones(AuthEvent.OTP_TELEGRAM_REQUIRED, AuthEvent.OTP_SEND_FAILED, AuthEvent.OTP_COOLDOWN)
+        - phones(AuthEvent.OTP_SENT) - done_phones
+    )
+
+    # «Зашли и ушли»: посетитель есть, а ни одного шага входа от него не было.
+    acted = set().union(*(
+        visitors_by_event.get(e, set()) for e in AuthEvent.OTP_ACTIVITY
+    ))
+    bounced = visitors_by_event.get(AuthEvent.VISIT, set()) - acted
+
+    last_event = {}
+    for event, phone, _visitor, detail, at in rows:
+        if phone:
+            last_event[phone] = (event, detail, at)
+
+    def stuck_rows(phone_set):
+        out = []
+        for phone in phone_set:
+            event, detail, at = last_event.get(phone, ('', '', None))
+            out.append({'phone': phone, 'event': dict(AuthEvent.EVENT_CHOICES).get(event, event),
+                        'detail': detail, 'at': at})
+        return sorted(out, key=lambda r: r['at'] or timezone.now(), reverse=True)[:PAGE_SIZE]
+
+    funnel = [
+        ('Зашли на сайт', len(visitors_by_event.get(AuthEvent.VISIT, ()))),
+        ('Открыли форму входа', len(visitors_by_event.get(AuthEvent.AUTH_OPENED, ()))),
+        ('Запросили код', len(phones(AuthEvent.OTP_SENT, AuthEvent.OTP_TELEGRAM_REQUIRED,
+                                     AuthEvent.OTP_COOLDOWN, AuthEvent.OTP_SEND_FAILED))),
+        ('Получили код', len(phones(AuthEvent.OTP_SENT))),
+        ('Вошли или зарегистрировались', len(done_phones)),
+    ]
+
+    failure_rows = [
+        {'label': label, 'total': by_event.get(code, 0), 'phones': len(phones_by_event.get(code, ()))}
+        for code, label in AuthEvent.EVENT_CHOICES if code in AuthEvent.FAILURE_EVENTS
+    ]
+
+    recent_failures = [
+        {'label': dict(AuthEvent.EVENT_CHOICES).get(event, event), 'phone': phone, 'detail': detail, 'at': at}
+        for event, phone, _visitor, detail, at in reversed(rows)
+        if event in AuthEvent.FAILURE_EVENTS
+    ][:PAGE_SIZE]
+
+    return render(request, 'monitoring/auth_funnel.html', {
+        'days': days,
+        'funnel': funnel,
+        'registered': by_event.get(AuthEvent.REGISTER_OK, 0),
+        'logged_in': by_event.get(AuthEvent.LOGIN_OK, 0),
+        'users_joined': User.objects.filter(date_joined__gte=since).count(),
+        'bounced_total': len(bounced),
+        'bounced_known': bool(visitors_by_event.get(AuthEvent.VISIT)),
+        'code_not_entered': stuck_rows(code_not_entered),
+        'code_not_entered_total': len(code_not_entered),
+        'never_got_code': stuck_rows(never_got_code),
+        'never_got_code_total': len(never_got_code),
+        'failure_rows': failure_rows,
+        'recent_failures': recent_failures,
+        'has_events': bool(rows),
+    })

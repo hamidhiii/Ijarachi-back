@@ -20,6 +20,9 @@ from ..serializers import (
     PhoneChangeVerifySerializer,
 )
 from ..otp import generate_otp, send_otp, telegram_deep_link, telegram_link_required
+from apps.monitoring import events
+from apps.monitoring.models import AuthEvent
+from rest_framework.exceptions import ValidationError
 
 logger = logging.getLogger(__name__)
 
@@ -34,10 +37,15 @@ class SendOTPView(APIView):
 
     def post(self, request):
         serializer = SendOTPSerializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
+        try:
+            serializer.is_valid(raise_exception=True)
+        except ValidationError as exc:
+            events.record(request, AuthEvent.OTP_INVALID_INPUT, phone=str(request.data.get("phone") or ""), detail=exc.detail)
+            raise
         phone = serializer.validated_data['phone']
 
         if telegram_link_required(phone):
+            events.record(request, AuthEvent.OTP_TELEGRAM_REQUIRED, phone=phone)
             return Response({
                 'code': 'telegram_link_required',
                 'detail': 'Подтвердите номер в Telegram-боте, чтобы получить код.',
@@ -54,6 +62,7 @@ class SendOTPView(APIView):
             is_used=False,
         ).exists()
         if recent:
+            events.record(request, AuthEvent.OTP_COOLDOWN, phone=phone)
             return Response(
                 {'code': 'otp_cooldown', 'detail': f'Подождите {cooldown} секунд перед повторной отправкой.', 'cooldown_seconds': cooldown},
                 status=status.HTTP_429_TOO_MANY_REQUESTS,
@@ -64,10 +73,13 @@ class SendOTPView(APIView):
 
         sent = send_otp(phone, code)
         if not sent:
+            events.record(request, AuthEvent.OTP_SEND_FAILED, phone=phone)
             return Response(
                 {'code': 'otp_send_failed', 'detail': 'Не удалось отправить код. Попробуйте позже.'},
                 status=status.HTTP_503_SERVICE_UNAVAILABLE,
             )
+
+        events.record(request, AuthEvent.OTP_SENT, phone=phone)
 
         # The link goes out on the success answer too, not only when the bot
         # still has to be confirmed. The code was just delivered to a Telegram
@@ -93,7 +105,11 @@ class VerifyOTPView(APIView):
 
     def post(self, request):
         serializer = VerifyOTPSerializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
+        try:
+            serializer.is_valid(raise_exception=True)
+        except ValidationError as exc:
+            events.record(request, AuthEvent.VERIFY_INVALID_INPUT, phone=str(request.data.get("phone") or ""), detail=exc.detail)
+            raise
         phone = serializer.validated_data['phone']
         code = serializer.validated_data['code']
 
@@ -106,6 +122,7 @@ class VerifyOTPView(APIView):
         ).order_by('-created_at').first()
 
         if not otp:
+            events.record(request, AuthEvent.VERIFY_FAILED, phone=phone)
             return Response(
                 {'detail': 'Неверный или устаревший код.'},
                 status=status.HTTP_400_BAD_REQUEST,
@@ -118,6 +135,8 @@ class VerifyOTPView(APIView):
         if is_new:
             Profile.objects.create(user=user)
             logger.info('New user registered: %s', phone)
+
+        events.record(request, AuthEvent.REGISTER_OK if is_new else AuthEvent.LOGIN_OK, phone=phone)
 
         refresh = RefreshToken.for_user(user)
         return Response({

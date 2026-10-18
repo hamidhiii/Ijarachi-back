@@ -92,6 +92,7 @@
   {% if access.can_view_kyc %}<a href="{% url 'monitor:kyc' %}" class="{% if here == 'kyc' %}on{% endif %}">KYC</a>{% endif %}
   {% if access.can_view_payments %}<a href="{% url 'monitor:payments' %}" class="{% if here == 'payments' %}on{% endif %}">Платежи</a>{% endif %}
   {% if access.can_view_errors %}<a href="{% url 'monitor:errors' %}" class="{% if here == 'errors' %}on{% endif %}">Ошибки</a>{% endif %}
+  {% if access.can_view_errors %}<a href="{% url 'monitor:auth_funnel' %}" class="{% if here == 'auth_funnel' %}on{% endif %}">Вход</a>{% endif %}
   {% if access.can_manage_access %}<a href="{% url 'monitor:access_list' %}" class="{% if 'access' in here %}on{% endif %}">Доступы</a>{% endif %}
   {% endwith %}
 </nav>

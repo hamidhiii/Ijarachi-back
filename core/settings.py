@@ -168,6 +168,7 @@ REST_FRAMEWORK = {
         'sms': '5/min',
         'payments': '20/min',
         'kyc': '10/min',
+        'analytics': '120/min',
     },
     # Exactly one reverse proxy (nginx) sits in front of Django here. Without
     # this, SimpleRateThrottle.get_ident() falls back to hashing the raw

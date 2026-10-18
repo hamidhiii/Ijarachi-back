@@ -1,0 +1,118 @@
+{% extends 'monitoring/base.html' %}
+{% block title %}Вход и регистрация — Монитор Rentoo{% endblock %}
+
+{% block content %}
+<h1>Вход и регистрация</h1>
+<p class="sub">
+  Период:
+  <a href="?days=1"{% if days == 1 %} style="font-weight:600"{% endif %}>сутки</a> ·
+  <a href="?days=7"{% if days == 7 %} style="font-weight:600"{% endif %}>7 дней</a> ·
+  <a href="?days=30"{% if days == 30 %} style="font-weight:600"{% endif %}>30 дней</a>
+</p>
+
+{% if not has_events %}
+  <div class="panel muted">
+    За этот период событий нет. Журнал ведётся с момента выхода этой версии; визиты на сайт
+    появятся, когда фронтенд начнёт слать <code>POST /api/v1/analytics/track/</code>.
+  </div>
+{% endif %}
+
+<div class="cards">
+  <div class="card">
+    <div class="label">Зарегистрировались</div>
+    <div class="value">{{ registered }}</div>
+    <div class="hint">новых аккаунтов в базе: {{ users_joined }}</div>
+  </div>
+  <div class="card">
+    <div class="label">Вошли повторно</div>
+    <div class="value">{{ logged_in }}</div>
+    <div class="hint">уже были в системе</div>
+  </div>
+  <div class="card">
+    <div class="label">Получили код и не вошли</div>
+    <div class="value">{{ code_not_entered_total }}</div>
+    <div class="hint">код ушёл, ввода нет</div>
+  </div>
+  <div class="card">
+    <div class="label">Не получили код</div>
+    <div class="value">{{ never_got_code_total }}</div>
+    <div class="hint">Telegram, сбой отправки, лимит</div>
+  </div>
+  <div class="card">
+    <div class="label">Зашли и ушли</div>
+    <div class="value">{% if bounced_known %}{{ bounced_total }}{% else %}—{% endif %}</div>
+    <div class="hint">{% if bounced_known %}были на сайте, к форме не притронулись{% else %}нужны визиты с фронтенда{% endif %}</div>
+  </div>
+</div>
+
+<h2>Воронка</h2>
+<div class="scroll">
+  <table>
+    <thead><tr><th>Шаг</th><th>Людей</th></tr></thead>
+    <tbody>
+      {% for label, total in funnel %}
+        <tr><td>{{ label }}</td><td>{{ total }}</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+<h2>Где спотыкаются</h2>
+<div class="scroll">
+  <table>
+    <thead><tr><th>Причина</th><th>Случаев</th><th>Разных номеров</th></tr></thead>
+    <tbody>
+      {% for row in failure_rows %}
+        <tr><td>{{ row.label }}</td><td>{{ row.total }}</td><td>{{ row.phones }}</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+<h2>Получили код, но не вошли</h2>
+<div class="scroll">
+  <table>
+    <thead><tr><th>Телефон</th><th>Последний шаг</th><th>Когда</th></tr></thead>
+    <tbody>
+      {% for row in code_not_entered %}
+        <tr><td class="nowrap">{{ row.phone }}</td><td>{{ row.event }}</td><td class="nowrap">{{ row.at|date:"d.m.y H:i" }}</td></tr>
+      {% empty %}
+        <tr><td colspan="3" class="empty">Таких нет.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+<h2>Не получили код</h2>
+<div class="scroll">
+  <table>
+    <thead><tr><th>Телефон</th><th>Что случилось</th><th>Когда</th></tr></thead>
+    <tbody>
+      {% for row in never_got_code %}
+        <tr><td class="nowrap">{{ row.phone }}</td><td>{{ row.event }}</td><td class="nowrap">{{ row.at|date:"d.m.y H:i" }}</td></tr>
+      {% empty %}
+        <tr><td colspan="3" class="empty">Таких нет.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+<h2>Последние ошибки</h2>
+<div class="scroll">
+  <table>
+    <thead><tr><th>Когда</th><th>Ошибка</th><th>Телефон</th><th>Подробности</th></tr></thead>
+    <tbody>
+      {% for row in recent_failures %}
+        <tr>
+          <td class="nowrap">{{ row.at|date:"d.m.y H:i" }}</td>
+          <td>{{ row.label }}</td>
+          <td class="nowrap">{{ row.phone|default:"—" }}</td>
+          <td class="muted">{{ row.detail }}</td>
+        </tr>
+      {% empty %}
+        <tr><td colspan="4" class="empty">Ошибок за период нет.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endblock %}

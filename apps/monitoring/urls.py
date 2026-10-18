@@ -16,6 +16,7 @@ urlpatterns = [
     path('kyc/', views.kyc, name='kyc'),
     path('payments/', views.payments, name='payments'),
     path('errors/', views.errors, name='errors'),
+    path('auth/', views.auth_funnel, name='auth_funnel'),
 
     path('access/', views.access_list, name='access_list'),
     path('access/new/', views.access_create, name='access_create'),
