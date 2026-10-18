@@ -185,7 +185,13 @@ SIMPLE_JWT = {
         days=config('JWT_REFRESH_TOKEN_LIFETIME_DAYS', default=30, cast=int)
     ),
     'ROTATE_REFRESH_TOKENS': True,
-    'BLACKLIST_AFTER_ROTATION': True,
+    # Выключено по умолчанию: с blacklist-ом ответ на /auth/refresh/, потерянный
+    # по дороге (телефон ушёл в Telegram за кодом, вкладку выгрузили, обрыв
+    # связи), оставляет клиента с уже погашенным refresh — следующее обновление
+    # получает 401 и человека выкидывает на вход «просто так». Ротация
+    # сохраняется, выход из аккаунта (LogoutView) по-прежнему гасит токен явно.
+    # Если нужен строгий режим — JWT_BLACKLIST_AFTER_ROTATION=true.
+    'BLACKLIST_AFTER_ROTATION': config('JWT_BLACKLIST_AFTER_ROTATION', default=False, cast=bool),
     'AUTH_HEADER_TYPES': ('Bearer',),
     # Домен закрыт nginx-ом статическим Basic Auth (Authorization: Basic ...) —
     # один HTTP-заголовок не может нести два разных Authorization-значения
