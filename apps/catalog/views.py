@@ -443,11 +443,11 @@ class OfferListCreateView(generics.ListCreateAPIView):
         try:
             item = Item.objects.select_related('owner').get(pk=item_id, status=Item.STATUS_APPROVED)
         except (Item.DoesNotExist, ValueError, TypeError):
-            raise NotFound('Объявление не найдено.')
+            raise NotFound({'code': 'item_not_found', 'detail': 'Объявление не найдено.'})
         if item.owner_id == self.request.user.id:
-            raise ValidationError('Нельзя предложить цену на собственное объявление.')
+            raise ValidationError({'code': 'offer_own_item', 'detail': 'Нельзя предложить цену на собственное объявление.'})
         if not item.is_negotiable:
-            raise ValidationError('Владелец не отметил это объявление как готовое к торгу.')
+            raise ValidationError({'code': 'offer_not_negotiable', 'detail': 'Владелец не отметил это объявление как готовое к торгу.'})
 
         offer = serializer.save(
             item=item, renter=self.request.user,
