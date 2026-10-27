@@ -11,6 +11,7 @@ from ..otp import generate_otp
 from ..serializers import normalize_uz_phone
 from ..telegram_bot import (
     CODE_SENT_TEXT,
+    CONTACT_NOT_OWN_TEXT,
     CONFIRM_PHONE_TEXT,
     LINKED_TEXT,
     PHONE_MISMATCH_TEXT,
@@ -105,9 +106,19 @@ class TelegramWebhookView(APIView):
         ).exists()
 
     def _handle_contact(self, chat_id, from_user, contact):
-        # Требуем, чтобы контакт принадлежал самому пользователю бота (не переслан за кого-то).
-        if contact.get('user_id') and contact.get('user_id') != from_user.get('id'):
-            self._reply(chat_id, PHONE_MISMATCH_TEXT)
+        # Номер засчитывается, только если это контакт самого отправителя — тот,
+        # что Telegram отдаёт по кнопке «Отправить номер». У контакта из записной
+        # книжки (или отправленного сторонним клиентом) user_id нет вовсе, и
+        # прежняя проверка «если user_id есть и не совпал» такой контакт
+        # пропускала: чужой номер привязывался к чужому чату, и OTP для входа
+        # в чужой аккаунт уходил ему.
+        sender_id = from_user.get('id')
+        if not sender_id or contact.get('user_id') != sender_id:
+            logger.warning(
+                'Telegram contact rejected in chat %s: contact user_id=%s, sender=%s',
+                chat_id, contact.get('user_id'), sender_id,
+            )
+            send_contact_request(chat_id, CONTACT_NOT_OWN_TEXT)
             return
 
         try:

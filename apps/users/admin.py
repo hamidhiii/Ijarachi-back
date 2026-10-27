@@ -31,7 +31,8 @@ class ProfileAdmin(admin.ModelAdmin):
     list_display = ['user', 'full_name', 'rating', 'verification_status', 'is_verified_kyc', 'kyc_verified_at']
     list_filter = ['verification_status', 'is_verified_kyc']
     search_fields = ['user__phone', 'full_name']
-    readonly_fields = ['kyc_verified_at']
+    # Баланс меняется только через apps.payments.wallet.credit_wallet (с записью в журнал).
+    readonly_fields = ['kyc_verified_at', 'wallet_balance']
 
 
 @admin.register(OTPCode)

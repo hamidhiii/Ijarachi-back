@@ -70,7 +70,10 @@ class AdminDashboardView(APIView):
         now = timezone.now()
         month_ago = now - timedelta(days=30)
 
-        paid_payments = Payment.objects.filter(status__in=[Payment.STATUS_PAID, Payment.STATUS_COMPLETED])
+        # Платежи заглушки (PAYMENTS_MODE=stub) — без денег, в оборот не входят.
+        paid_payments = Payment.objects.filter(
+            status__in=[Payment.STATUS_PAID, Payment.STATUS_COMPLETED],
+        ).exclude(provider=Payment.PROVIDER_STUB)
         gmv = paid_payments.aggregate(total=Sum('amount'))['total'] or 0
 
         total_users = CustomUser.objects.count()

@@ -222,24 +222,45 @@ class ListingAvailabilityView(APIView):
         except Item.DoesNotExist:
             return None
 
+    @staticmethod
+    def _payload(item):
+        from apps.bookings import availability as occupancy
+
+        manual = occupancy.manual_blocked_dates(item)
+        booked = occupancy.booked_dates(item)
+        return {
+            # Всё, что нельзя забронировать — прежнее поле, клиент рисует по нему календарь.
+            'blocked_dates': sorted(set(manual) | set(booked)),
+            # Разбивка: что закрыл владелец (это он и правит PATCH-ем) и что занято бронями.
+            'manual_blocked_dates': sorted(manual),
+            'booked_dates': booked,
+        }
+
     def get(self, request, pk):
         item = self._get_item(request, pk)
         if not item:
             return Response({'detail': 'Объявление не найдено.'}, status=status.HTTP_404_NOT_FOUND)
-        availability, _ = ItemAvailability.objects.get_or_create(item=item)
-        return Response({'blocked_dates': availability.blocked_dates})
+        return Response(self._payload(item))
 
     def patch(self, request, pk):
+        """
+        Заменяет ручные блокировки владельца. Дни, занятые бронями, от ручного
+        списка не зависят: клиент шлёт обратно весь blocked_dates, и они сюда
+        не записываются — иначе после отмены брони дни остались бы закрыты.
+        """
+        from apps.bookings import availability as occupancy
+
         item = self._get_item(request, pk, write=True)
         if not item:
             return Response({'detail': 'Объявление не найдено.'}, status=status.HTTP_404_NOT_FOUND)
 
         serializer = ListingAvailabilitySerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
+        booked = set(occupancy.booked_dates(item))
         availability, _ = ItemAvailability.objects.get_or_create(item=item)
-        availability.blocked_dates = serializer.validated_data['blocked_dates']
+        availability.blocked_dates = [d for d in serializer.validated_data['blocked_dates'] if d not in booked]
         availability.save(update_fields=['blocked_dates'])
-        return Response({'blocked_dates': availability.blocked_dates})
+        return Response(self._payload(item))
 
 
 class ListingReviewsView(generics.ListAPIView):

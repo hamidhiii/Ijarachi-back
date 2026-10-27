@@ -11,6 +11,7 @@ from .views import (
     DealPayView,
     DealPreviewView,
     DealReviewView,
+    DisputeResolveView,
     DisputeView,
     MyDealsView,
     MyReviewsView,
@@ -27,6 +28,7 @@ urlpatterns = [
     path('deals/<int:pk>/photos/', BookingPhotoUploadView.as_view(), name='deal-photo-upload'),
     path('deals/<int:pk>/confirm-return/', ConfirmReturnView.as_view(), name='deal-confirm-return'),
     path('deals/<int:pk>/dispute/', DisputeView.as_view(), name='deal-dispute'),
+    path('deals/<int:pk>/resolve-dispute/', DisputeResolveView.as_view(), name='deal-resolve-dispute'),
     path('deals/<int:pk>/status/', BookingStatusUpdateView.as_view(), name='deal-status'),
 
     path('bookings/create/', BookingCreateView.as_view(), name='booking-create'),

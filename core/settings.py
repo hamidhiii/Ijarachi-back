@@ -10,6 +10,11 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 
 SECRET_KEY = config('SECRET_KEY', default='django-insecure-change-me-in-production')
 DEBUG = config('DEBUG', default=False, cast=bool)
+
+# Где запущен сервер: dev | staging | prod. От этого зависят заглушки оплаты и
+# MyID (см. core/runtime_modes.py): в prod они запрещены и роняют старт.
+# Без явного значения: DEBUG=True — dev, иначе prod (безопасное умолчание).
+APP_ENV = config('APP_ENV', default='dev' if DEBUG else 'prod')
 ALLOWED_HOSTS = config('ALLOWED_HOSTS', default='localhost,127.0.0.1,169.58.192.146,back.rentoo.uz').split(',')
 
 # Для POST с формы (вход в /admin/) Django сверяет заголовок Origin со схемой и хостом
@@ -343,6 +348,10 @@ SMS_REQUEST_TIMEOUT_SECONDS = config('SMS_REQUEST_TIMEOUT_SECONDS', default=10, 
 # False — сделки и оплата не требуют верификации, KYC-эндпоинты не зарегистрированы,
 # учётные расходы на KYC не пишутся. Данные ранее загруженных документов не удаляются.
 KYC_ENABLED = config('KYC_ENABLED', default=False, cast=bool)
+# Проверка личности через MyID: off — выключено, stub — заглушка, которая сразу
+# помечает профиль проверенным (только dev/staging, в prod старт падает).
+# Настоящей интеграции с MyID пока нет — значение live не принимается.
+MYID_MODE = config('MYID_MODE', default='off')
 KYC_FIRST_DEAL_COST = config('KYC_FIRST_DEAL_COST', default=8000, cast=int)
 # face_recognition distance threshold: чем меньше — тем строже сверка лица с документом (0..1)
 KYC_FACE_MATCH_DISTANCE = config('KYC_FACE_MATCH_DISTANCE', default=0.5, cast=float)
@@ -359,6 +368,17 @@ CHAT_MAX_OPEN_INQUIRIES = config('CHAT_MAX_OPEN_INQUIRIES', default=20, cast=int
 
 
 # ─── Payment Providers ────────────────────────────────────────────────────────
+
+# Режим онлайн-оплаты (Click/Payme), см. apps/payments/providers.py:
+#   off  — онлайн-оплата недоступна, работают только наличные; вебхуки отвечают 404;
+#   stub — заглушка: оплата подтверждается сразу, без денег. Только dev/staging,
+#          в prod сервер не стартует;
+#   live — настоящие Click/Payme и их вебхуки.
+# Умолчание — stub там, где заглушка разрешена, иначе off.
+PAYMENTS_MODE = config(
+    'PAYMENTS_MODE',
+    default='stub' if APP_ENV == 'staging' or (APP_ENV == 'dev' and DEBUG) else 'off',
+)
 
 PAYME_MERCHANT_ID = config('PAYME_MERCHANT_ID', default='')
 PAYME_SECRET_KEY = config('PAYME_SECRET_KEY', default='')
@@ -382,6 +402,10 @@ BOOKING_ABANDON_TIMEOUT_HOURS = config('BOOKING_ABANDON_TIMEOUT_HOURS', default=
 # Фотопротокол — единственное доказательство в сделке без залога, поэтому правило
 # живёт на сервере, а не только в интерфейсе.
 BOOKING_REQUIRE_HANDOVER_PHOTO = config('BOOKING_REQUIRE_HANDOVER_PHOTO', default=True, cast=bool)
+
+# Самая длинная аренда в днях. Занятость считается по диапазонам броней, и без
+# предела одна заявка на «0001–9999» раздувала бы календарь на миллионы дат.
+BOOKING_MAX_DAYS = config('BOOKING_MAX_DAYS', default=365, cast=int)
 
 # Platform commission (%)
 PLATFORM_COMMISSION_PERCENT = config('PLATFORM_COMMISSION_PERCENT', default=10, cast=int)

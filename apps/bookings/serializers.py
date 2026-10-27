@@ -5,7 +5,7 @@ from django.db.models import Avg
 from drf_spectacular.utils import extend_schema_field
 from rest_framework import serializers
 
-from .models import Booking, BookingPhoto, DealReview
+from .models import Booking, BookingPhoto, DealReview, DepositOperation
 from apps.catalog.models import Item
 from core.schema import UserMiniSerializer
 
@@ -49,6 +49,7 @@ class BookingCreateSerializer(serializers.ModelSerializer):
 
         if start > end:
             raise serializers.ValidationError('Дата начала не может быть позже даты окончания.')
+        validate_rental_length(start, end)
 
         if item.status != Item.STATUS_APPROVED:
             raise serializers.ValidationError('Эта вещь недоступна для аренды.')
@@ -56,11 +57,11 @@ class BookingCreateSerializer(serializers.ModelSerializer):
         if item.owner == self.context['request'].user:
             raise serializers.ValidationError('Нельзя арендовать собственную вещь.')
 
-        try:
-            if not item.availability.is_available(start, end):
-                raise serializers.ValidationError('Выбранные даты уже заняты.')
-        except Item.availability.RelatedObjectDoesNotExist:
-            pass
+        # Предварительная проверка для понятной ошибки. Окончательная — под
+        # блокировкой объявления во вьюхе, где бронь и занимает даты.
+        from .availability import is_range_free
+        if not is_range_free(item, start, end):
+            raise serializers.ValidationError('Выбранные даты уже заняты.')
 
         return data
 
@@ -82,7 +83,16 @@ class BookingCreateSerializer(serializers.ModelSerializer):
             total_price=pricing['total_price'],
             renter_comment=validated_data.get('renter_comment', ''),
             escrow_amount=pricing['total_price'],
+            deposit_status=Booking.DEPOSIT_PENDING if pricing['deposit'] > 0 else Booking.DEPOSIT_NONE,
             status=initial_status,
+        )
+
+
+def validate_rental_length(start, end):
+    days = (end - start).days + 1
+    if days > settings.BOOKING_MAX_DAYS:
+        raise serializers.ValidationError(
+            f'Аренда не может быть длиннее {settings.BOOKING_MAX_DAYS} дней.'
         )
 
 
@@ -98,6 +108,7 @@ class DealPreviewSerializer(serializers.Serializer):
     def validate(self, attrs):
         if attrs['start_date'] > attrs['end_date']:
             raise serializers.ValidationError('Дата начала не может быть позже даты окончания.')
+        validate_rental_length(attrs['start_date'], attrs['end_date'])
         return attrs
 
 
@@ -180,6 +191,15 @@ class DealPhotoSerializer(serializers.ModelSerializer):
     @extend_schema_field(UserMiniSerializer)
     def get_uploaded_by(self, obj):
         return _serialize_user_mini(obj.uploaded_by)
+
+
+class DepositOperationSerializer(serializers.ModelSerializer):
+    """Строка истории залога в карточке сделки."""
+
+    class Meta:
+        model = DepositOperation
+        fields = ['id', 'type', 'amount', 'comment', 'created_at']
+        read_only_fields = fields
 
 
 def public_status_field():
@@ -278,12 +298,14 @@ class BookingDetailSerializer(serializers.ModelSerializer):
     item_title = serializers.CharField(source='item.title', read_only=True)
     progress_renter = serializers.SerializerMethodField()
     progress_owner = serializers.SerializerMethodField()
+    deposit_operations = serializers.SerializerMethodField()
 
     class Meta:
         model = Booking
         fields = [
             'id', 'listing', 'owner', 'renter', 'start_date', 'end_date',
             'amount', 'status', 'viewer_role', 'photos', 'created_at',
+            'deposit_status', 'deposit_operations',
             # Дополнительные поля для обратной совместимости с мобильным клиентом.
             'item', 'item_title', 'owner_phone', 'owner_contact', 'renter_contact',
             'days', 'price_per_day', 'deposit_amount', 'commission_amount', 'total_price',
@@ -297,6 +319,7 @@ class BookingDetailSerializer(serializers.ModelSerializer):
             'total_price',
             'escrow_status',
             'escrow_amount',
+            'deposit_status',
         ]
 
     @extend_schema_field(ListingMiniSerializer)
@@ -318,6 +341,10 @@ class BookingDetailSerializer(serializers.ModelSerializer):
     @extend_schema_field(viewer_role_field())
     def get_viewer_role(self, obj):
         return _viewer_role(obj, self.context.get('request'))
+
+    @extend_schema_field(DepositOperationSerializer(many=True))
+    def get_deposit_operations(self, obj):
+        return DepositOperationSerializer(obj.deposit_operations.all(), many=True).data
 
     @extend_schema_field(DealPhotoSerializer(many=True))
     def get_photos(self, obj):
@@ -412,6 +439,14 @@ def require_handover_photo(booking, new_status):
         raise serializers.ValidationError(message)
 
 
+def booking_pays_in_cash(booking) -> bool:
+    """Сделка оплачивается наличными, если последним выбран способ cash."""
+    from apps.payments.models import Payment
+
+    latest = booking.payments.order_by('-created_at', '-pk').first()
+    return latest is not None and latest.provider == Payment.PROVIDER_CASH
+
+
 class BookingStatusUpdateSerializer(serializers.Serializer):
     """Status transitions based on role."""
     ALLOWED_TRANSITIONS = {
@@ -458,6 +493,13 @@ class BookingStatusUpdateSerializer(serializers.Serializer):
             raise serializers.ValidationError(
                 f'Переход из "{booking.status}" в "{new_status}" не разрешён.'
             )
+        if role == 'owner' and new_status == Booking.STATUS_PAID and not booking_pays_in_cash(booking):
+            # Онлайн-оплату подтверждает провайдер (вебхук или заглушка), а не
+            # владелец: иначе сделка стала бы «оплаченной» без единого платежа.
+            raise serializers.ValidationError(
+                'Подтвердить бронь вручную можно только при оплате наличными. '
+                'Онлайн-оплата подтверждается после поступления платежа.'
+            )
         if role != 'admin':
             require_handover_photo(booking, new_status)
         return new_status
@@ -474,6 +516,15 @@ class BookingStatusUpdateSerializer(serializers.Serializer):
 
 class DealPaySerializer(serializers.Serializer):
     provider = serializers.ChoiceField(choices=['click', 'payme', 'cash'])
+
+
+class DisputeResolutionSerializer(serializers.Serializer):
+    """POST /deals/{id}/resolve-dispute/ — решение сотрудника по залогу."""
+    deposit_withheld = serializers.DecimalField(
+        max_digits=12, decimal_places=0, min_value=Decimal('0'),
+        help_text='Сколько залога удержать в пользу владельца; остальное вернётся арендатору.',
+    )
+    comment = serializers.CharField(max_length=500, required=False, allow_blank=True)
 
 
 class DealPayResponseSerializer(serializers.Serializer):

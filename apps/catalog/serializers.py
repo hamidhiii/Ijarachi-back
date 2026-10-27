@@ -156,10 +156,9 @@ class ItemDetailSerializer(serializers.ModelSerializer):
 
     @extend_schema_field(serializers.ListField(child=serializers.CharField(), help_text='YYYY-MM-DD'))
     def get_blocked_dates(self, obj):
-        try:
-            return obj.availability.blocked_dates
-        except ItemAvailability.DoesNotExist:
-            return []
+        # Ручные блокировки владельца плюс дни, занятые бронями.
+        from apps.bookings.availability import blocked_dates
+        return blocked_dates(obj)
 
     @extend_schema_field(OwnerMiniSerializer)
     def get_owner(self, obj):

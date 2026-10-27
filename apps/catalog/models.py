@@ -148,9 +148,12 @@ class ItemImage(models.Model):
 
 
 class ItemAvailability(models.Model):
-    """Stores blocked dates for an item (as a list of ISO date strings)."""
+    """
+    Дни, которые владелец закрыл вручную (ISO-строки). Брони сюда больше не
+    пишутся: их даты считаются по самим броням, см. apps.bookings.availability.
+    """
     item = models.OneToOneField(Item, on_delete=models.CASCADE, related_name='availability')
-    blocked_dates = models.JSONField('Заблокированные даты', default=list)
+    blocked_dates = models.JSONField('Закрыто владельцем', default=list)
 
     class Meta:
         verbose_name = 'Доступность'
@@ -158,39 +161,6 @@ class ItemAvailability(models.Model):
 
     def __str__(self):
         return f'Доступность: {self.item.title}'
-
-    def is_available(self, start_date, end_date) -> bool:
-        """Check if item is available for the given date range."""
-        from datetime import date, timedelta
-        blocked = set(self.blocked_dates)
-        current = start_date
-        while current <= end_date:
-            if current.isoformat() in blocked:
-                return False
-            current += timedelta(days=1)
-        return True
-
-    def block_range(self, start_date, end_date):
-        """Add dates from range to blocked list."""
-        from datetime import timedelta
-        blocked = set(self.blocked_dates)
-        current = start_date
-        while current <= end_date:
-            blocked.add(current.isoformat())
-            current += timedelta(days=1)
-        self.blocked_dates = sorted(blocked)
-        self.save(update_fields=['blocked_dates'])
-
-    def unblock_range(self, start_date, end_date):
-        """Remove dates from blocked list."""
-        from datetime import timedelta
-        blocked = set(self.blocked_dates)
-        current = start_date
-        while current <= end_date:
-            blocked.discard(current.isoformat())
-            current += timedelta(days=1)
-        self.blocked_dates = sorted(blocked)
-        self.save(update_fields=['blocked_dates'])
 
 
 class Favorite(models.Model):

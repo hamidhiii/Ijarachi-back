@@ -1,92 +1,37 @@
 import hashlib
 import base64
 import logging
-from decimal import Decimal
 from django.conf import settings
 from django.db import transaction
-from django.utils import timezone
+from django.http import Http404
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
 
 from .models import Payment
+from .services import finalize_paid_payment
 from apps.bookings.models import Booking
+from core.runtime_modes import payments_live
 
 logger = logging.getLogger('apps.payments')
 
 
-def finalize_paid_payment(payment: Payment):
-    booking = payment.booking
-    if payment.status in [Payment.STATUS_PAID, Payment.STATUS_COMPLETED]:
-        return booking
-    payment.status = Payment.STATUS_PAID
-    payment.save(update_fields=['status', 'updated_at'])
+class LiveWebhookMixin:
+    """
+    Вебхуки Click/Payme существуют только при PAYMENTS_MODE=live. В режимах
+    off и stub маршрут отвечает 404, будто его нет: иначе запрос с верной
+    подписью мог бы провести «оплату» сделки там, где деньги не принимаются.
+    """
 
-    booking.status = Booking.STATUS_PAID
-    booking.escrow_status = Booking.ESCROW_HELD
-    booking.contact_revealed_at = timezone.now()
-    update_fields = ['status', 'escrow_status', 'contact_revealed_at', 'updated_at']
-    booking.save(update_fields=update_fields)
-
-    from apps.payments.models import Transaction
-
-    amount_uzs = (Decimal(str(payment.amount)) / Decimal('100')).quantize(Decimal('1'))
-    Transaction.objects.create(
-        booking=booking,
-        payment=payment,
-        user=booking.renter,
-        type=Transaction.TYPE_ESCROW_HOLD,
-        amount=amount_uzs,
-        currency='UZS',
-        metadata={'provider': payment.provider},
-    )
-
-    try:
-        from apps.chat.models import Conversation
-        from apps.notifications.models import Notification
-        from apps.notifications.tasks import create_notification
-
-        conversation = Conversation.objects.filter(deal=booking).first()
-        if not conversation:
-            # Тот же арендатор мог уже написать владельцу по этому объявлению до
-            # брони — переиспользуем этот диалог вместо создания второго рядом,
-            # просто проставляя ему deal_id задним числом.
-            conversation = Conversation.objects.filter(
-                listing=booking.item, participants=booking.renter, deal__isnull=True,
-            ).first()
-        if not conversation:
-            conversation = Conversation.objects.create(deal=booking, listing=booking.item)
-        elif not conversation.deal_id:
-            conversation.deal = booking
-            conversation.save(update_fields=['deal', 'updated_at'])
-        conversation.participants.add(booking.renter, booking.item.owner)
-        payload = {
-            'booking_id': booking.pk,
-            'message': 'Чат по сделке открыт',
-            'link': f'/messages?deal={booking.pk}',
-        }
-        create_notification(booking.renter, Notification.TYPE_CHAT, payload)
-        create_notification(booking.item.owner, Notification.TYPE_CHAT, payload)
-
-        create_notification(booking.renter, Notification.TYPE_PAYMENT, {
-            'title': 'Оплата прошла',
-            'message': f'Оплата сделки «{booking.item.title}» прошла успешно.',
-            'booking_id': booking.pk,
-        })
-        create_notification(booking.item.owner, Notification.TYPE_PAYMENT, {
-            'title': 'Оплата прошла',
-            'message': f'Арендатор оплатил «{booking.item.title}».',
-            'booking_id': booking.pk,
-        })
-    except Exception as exc:
-        logger.exception('Failed to open paid booking chat for booking #%s: %s', booking.pk, exc)
-
-    return booking
+    def initial(self, request, *args, **kwargs):
+        if not payments_live():
+            raise Http404
+        return super().initial(request, *args, **kwargs)
 
 
 # ─── Payme ────────────────────────────────────────────────────────────────────
 
-class PaymeWebhookView(APIView):
+class PaymeWebhookView(LiveWebhookMixin, APIView):
     """
     POST /api/v1/payments/payme/webhook/
     Handles Payme merchant API (JSON-RPC 2.0).
@@ -210,16 +155,13 @@ class PaymeWebhookView(APIView):
 
             booking = payment.booking
             if booking.status in (Booking.STATUS_PENDING_PAYMENT, Booking.STATUS_PAID):
+                # Отмена сама освобождает даты: их занимает бронь, пока она активна.
+                from apps.bookings.settlement import refund_deposit_on_cancel
+
                 booking.transition_to(Booking.STATUS_CANCELLED)
                 booking.escrow_status = Booking.ESCROW_REFUNDED
                 booking.save(update_fields=['escrow_status', 'updated_at'])
-                # Unblock dates
-                try:
-                    from apps.catalog.models import ItemAvailability
-                    avail = ItemAvailability.objects.get(item=booking.item)
-                    avail.unblock_range(booking.start_date, booking.end_date)
-                except Exception:
-                    pass
+                refund_deposit_on_cancel(booking, 'Платёж Payme отменён')
 
             logger.warning('Payment cancelled (Payme): booking #%s, reason=%s', booking.pk, reason)
 
@@ -248,7 +190,7 @@ class PaymeWebhookView(APIView):
 
 # ─── Click ────────────────────────────────────────────────────────────────────
 
-class ClickWebhookView(APIView):
+class ClickWebhookView(LiveWebhookMixin, APIView):
     """
     POST /api/v1/payments/click/webhook/
     Handles Click SHOP API (Prepare + Complete steps).

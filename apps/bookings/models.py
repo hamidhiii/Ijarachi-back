@@ -73,6 +73,25 @@ class Booking(models.Model):
         (ESCROW_NONE, 'Без эскроу (наличные)'),
     ]
 
+    # Залог живёт отдельно от эскроу аренды: аренда уходит владельцу при
+    # завершении, а залог — арендатору целиком, либо его часть удерживается
+    # по решению спора. История операций — DepositOperation.
+    DEPOSIT_NONE = 'none'
+    DEPOSIT_PENDING = 'pending'
+    DEPOSIT_HELD = 'held'
+    DEPOSIT_REFUNDED = 'refunded'
+    DEPOSIT_PARTIALLY_WITHHELD = 'partially_withheld'
+    DEPOSIT_WITHHELD = 'withheld'
+
+    DEPOSIT_CHOICES = [
+        (DEPOSIT_NONE, 'Без залога'),
+        (DEPOSIT_PENDING, 'Ждёт оплаты'),
+        (DEPOSIT_HELD, 'Удержан платформой'),
+        (DEPOSIT_REFUNDED, 'Возвращён арендатору'),
+        (DEPOSIT_PARTIALLY_WITHHELD, 'Удержан частично'),
+        (DEPOSIT_WITHHELD, 'Удержан полностью'),
+    ]
+
     # Progress label per status for each role (used by mobile)
     PROGRESS_RENTER = {
         STATUS_DRAFT: 'Черновик сделки',
@@ -120,6 +139,7 @@ class Booking(models.Model):
     status = models.CharField('Статус', max_length=30, choices=STATUS_CHOICES, default=STATUS_DRAFT)
     escrow_status = models.CharField(max_length=20, choices=ESCROW_CHOICES, default=ESCROW_PENDING)
     escrow_amount = models.DecimalField(max_digits=14, decimal_places=0, default=0)
+    deposit_status = models.CharField('Залог', max_length=20, choices=DEPOSIT_CHOICES, default=DEPOSIT_PENDING)
     renter_comment = models.TextField('Комментарий арендатора', blank=True)
     dispute_reason = models.TextField(blank=True)
     returned_at = models.DateTimeField(null=True, blank=True)
@@ -202,6 +222,39 @@ class DealReview(models.Model):
 
     def __str__(self):
         return f'Review #{self.pk}: {self.rating}'
+
+
+class DepositOperation(models.Model):
+    """История залога по сделке: удержан при оплате, возвращён, удержан по спору."""
+    TYPE_HOLD = 'hold'
+    TYPE_REFUND = 'refund'
+    TYPE_WITHHOLD = 'withhold'
+
+    TYPE_CHOICES = [
+        (TYPE_HOLD, 'Удержан при оплате'),
+        (TYPE_REFUND, 'Возвращён арендатору'),
+        (TYPE_WITHHOLD, 'Удержан в пользу владельца'),
+    ]
+
+    booking = models.ForeignKey(
+        Booking, on_delete=models.CASCADE, related_name='deposit_operations', verbose_name='Сделка',
+    )
+    type = models.CharField('Операция', max_length=20, choices=TYPE_CHOICES)
+    amount = models.DecimalField('Сумма (сум)', max_digits=12, decimal_places=0)
+    actor = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='deposit_operations', verbose_name='Кто решил',
+    )
+    comment = models.CharField('Комментарий', max_length=500, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        verbose_name = 'Операция по залогу'
+        verbose_name_plural = 'Операции по залогу'
+        ordering = ['created_at']
+
+    def __str__(self):
+        return f'#{self.booking_id}: {self.get_type_display()} {self.amount}'
 
 
 class BookingStatusLog(models.Model):
