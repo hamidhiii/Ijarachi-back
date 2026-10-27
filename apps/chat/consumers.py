@@ -43,7 +43,9 @@ class ChatConsumer(AsyncJsonWebsocketConsumer):
     def _create_message(self, text):
         from .models import Conversation, Message
 
-        conversation = Conversation.objects.get(pk=self.conversation_id)
+        from .serializers import contacts_revealed
+
+        conversation = Conversation.objects.select_related('deal').get(pk=self.conversation_id)
         user = self.scope['user']
         message = Message.objects.create(conversation=conversation, sender=user, text=text)
         conversation.save(update_fields=['updated_at'])
@@ -55,7 +57,9 @@ class ChatConsumer(AsyncJsonWebsocketConsumer):
             'id': message.pk,
             'conversation': conversation.pk,
             'sender': {'id': user.pk, 'full_name': full_name},
-            'sender_phone': user.phone,
+            # Сообщение уходит всем участникам: номер отправителя — только если
+            # контакты по сделке уже раскрыты (см. contacts_revealed).
+            'sender_phone': user.phone if contacts_revealed(conversation) else None,
             'text': message.text,
             'is_read': False,
             'created_at': message.created_at.isoformat(),

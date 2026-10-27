@@ -15,8 +15,8 @@ from apps.payments.models import Payment, WalletTransaction
 from apps.payments.wallet import credit_wallet
 from apps.users.models import Profile
 
-# Аренда 3 дня × 100 000, комиссия 10 % → владельцу 270 000. Залог 50 000.
-OWNER_RENT = Decimal('270000')
+# Аренда 3 дня × 100 000 = 300 000, комиссия 15 % удерживается → владельцу 255 000. Залог 50 000.
+OWNER_RENT = Decimal('255000')
 DEPOSIT = Decimal('50000')
 
 

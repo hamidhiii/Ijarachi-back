@@ -229,3 +229,13 @@ class Offer(models.Model):
 
     def __str__(self):
         return f'{self.item_id} · {self.renter_id} · {self.amount} ({self.status})'
+
+    @classmethod
+    def accepted_for(cls, item, renter):
+        """
+        Согласованная цена пары (объявление, арендатор): последняя строка ветки,
+        если она принята. Новое предложение после принятия открывает торг заново,
+        и до ответа действует цена из объявления.
+        """
+        latest = cls.objects.filter(item=item, renter=renter).order_by('-created_at', '-pk').first()
+        return latest if latest is not None and latest.status == cls.STATUS_ACCEPTED else None

@@ -15,12 +15,14 @@ from .views import (
     DisputeView,
     MyDealsView,
     MyReviewsView,
+    PayoutPreviewView,
     UserReviewsView,
 )
 
 urlpatterns = [
     path('deals/', DealCreateView.as_view(), name='deal-create'),
     path('deals/preview/', DealPreviewView.as_view(), name='deal-preview'),
+    path('pricing/payout/', PayoutPreviewView.as_view(), name='pricing-payout'),
     path('deals/list/', MyDealsView.as_view(), name='deal-list'),
     path('deals/<int:pk>/', DealDetailView.as_view(), name='deal-detail'),
     path('deals/<int:pk>/pay/', DealPayView.as_view(), name='deal-pay'),

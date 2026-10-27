@@ -55,9 +55,14 @@ class RuntimeModeValidationTests(SimpleTestCase):
     def test_stubs_allowed_in_local_dev(self):
         validate_runtime_modes()
 
-    @override_settings(PAYMENTS_MODE='live', MYID_MODE='off', **PROD)
+    @override_settings(PAYMENTS_MODE='live', MYID_MODE='off', SECRET_KEY='a-real-secret', **PROD)
     def test_live_payments_allowed_in_prod(self):
         validate_runtime_modes()
+
+    @override_settings(PAYMENTS_MODE='off', MYID_MODE='off', SECRET_KEY='django-insecure-change-me-in-production', **PROD)
+    def test_default_secret_key_in_prod_is_refused(self):
+        with self.assertRaisesMessage(ImproperlyConfigured, 'SECRET_KEY'):
+            validate_runtime_modes()
 
 
 class ServerStartTests(SimpleTestCase):
@@ -73,6 +78,8 @@ class ServerStartTests(SimpleTestCase):
             'MYID_MODE': 'off',
             **env,
         }
+        # None — переменная не задана вовсе (действует умолчание из settings).
+        full_env = {key: value for key, value in full_env.items() if value is not None}
         return subprocess.run(
             [sys.executable, str(base / 'manage.py'), 'check'],
             cwd=base, env=full_env, capture_output=True, text=True, timeout=120,
@@ -82,6 +89,11 @@ class ServerStartTests(SimpleTestCase):
         result = self._manage_check(APP_ENV='prod', PAYMENTS_MODE='stub')
         self.assertNotEqual(result.returncode, 0)
         self.assertIn('PAYMENTS_MODE=stub', result.stderr)
+
+    def test_prod_without_secret_key_does_not_start(self):
+        result = self._manage_check(APP_ENV='prod', PAYMENTS_MODE='off', SECRET_KEY=None)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('SECRET_KEY не задан', result.stderr)
 
     def test_prod_without_explicit_mode_starts_with_payments_off(self):
         result = self._manage_check(APP_ENV='prod', PAYMENTS_MODE='off')

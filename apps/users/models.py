@@ -98,6 +98,9 @@ class OTPCode(models.Model):
     code = models.CharField('OTP код', max_length=6)
     created_at = models.DateTimeField(auto_now_add=True)
     is_used = models.BooleanField(default=False)
+    # Неудачные попытки ввода по этому номеру, пока код жив. После
+    # OTP_MAX_ATTEMPTS код гасится — иначе 6 цифр подбираются перебором.
+    attempts = models.PositiveSmallIntegerField('Неудачных попыток', default=0)
 
     class Meta:
         verbose_name = 'OTP код'
@@ -271,6 +274,7 @@ class PhoneChangeRequest(models.Model):
     code = models.CharField(max_length=6)
     created_at = models.DateTimeField(auto_now_add=True)
     is_used = models.BooleanField(default=False)
+    attempts = models.PositiveSmallIntegerField('Неудачных попыток', default=0)
 
     class Meta:
         ordering = ['-created_at']

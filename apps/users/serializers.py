@@ -2,6 +2,7 @@ import re
 
 from drf_spectacular.utils import extend_schema_field
 from rest_framework import serializers
+from rest_framework_simplejwt.serializers import TokenRefreshSerializer
 from rest_framework_simplejwt.tokens import RefreshToken
 from django.contrib.auth import get_user_model
 from .models import Profile, KYCDocument, PassportDocument, FaceVerification
@@ -36,6 +37,24 @@ class VerifyOTPSerializer(serializers.Serializer):
 
     def validate_phone(self, value):
         return normalize_uz_phone(value)
+
+
+class ActiveUserTokenRefreshSerializer(TokenRefreshSerializer):
+    """
+    Обновление токена, которое отказывает заблокированному (is_active=False) или
+    удалённому пользователю. Стандартный сериализатор SimpleJWT пользователя не
+    проверяет и продолжает выдавать новые access-токены.
+    """
+
+    def validate(self, attrs):
+        from rest_framework_simplejwt.exceptions import InvalidToken
+        from rest_framework_simplejwt.settings import api_settings
+
+        token = self.token_class(attrs['refresh'])
+        user_id = token.get(api_settings.USER_ID_CLAIM)
+        if not User.objects.filter(**{api_settings.USER_ID_FIELD: user_id, 'is_active': True}).exists():
+            raise InvalidToken({'code': 'user_inactive', 'detail': 'Пользователь заблокирован или удалён.'})
+        return super().validate(attrs)
 
 
 class TokenPairSerializer(serializers.Serializer):

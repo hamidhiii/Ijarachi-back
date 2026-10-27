@@ -1,4 +1,4 @@
-import random
+import secrets
 import string
 import logging
 from django.conf import settings
@@ -57,4 +57,5 @@ def send_otp_sms(phone: str, code: str) -> bool:
 
 
 def generate_otp(length: int = 6) -> str:
-    return ''.join(random.choices(string.digits, k=length))
+    # secrets, а не random: код входа должен быть непредсказуем.
+    return ''.join(secrets.choice(string.digits) for _ in range(length))

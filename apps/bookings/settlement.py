@@ -1,6 +1,9 @@
 """
 Расчёт по сделке: выплата владельцу за аренду, возврат или удержание залога.
 
+Выплата владельцу — аренда минус комиссия, зафиксированная в сделке
+(Booking.commission_amount, модель B: удерживается из выплаты).
+
 Залог и аренда разведены. При завершении сделки аренда (за вычетом комиссии)
 уходит владельцу, а залог — арендатору целиком. Если был спор, сотрудник
 решает, какую часть залога удержать в пользу владельца (resolve_dispute);
@@ -15,7 +18,6 @@ WalletTransaction (одно начисление каждого типа на с
 import logging
 from decimal import Decimal
 
-from django.conf import settings
 from django.db import transaction
 
 from .models import Booking, DepositOperation
@@ -126,9 +128,11 @@ def settle_completed_booking(booking_id, deposit_withheld=Decimal('0'), actor=No
         owner, renter = booking.item.owner, booking.renter
         lock_profiles(owner, renter)
 
-        commission_rate = Decimal(str(settings.PLATFORM_COMMISSION_PERCENT)) / Decimal('100')
+        # Модель B: комиссия зафиксирована в сделке при создании и удерживается
+        # из выплаты. Берём её из сделки, а не пересчитываем по текущей ставке —
+        # иначе смена PLATFORM_COMMISSION_PERCENT задним числом меняла бы выплату.
         rental_income = booking.price_per_day * booking.days
-        owner_payout = (rental_income * (Decimal('1') - commission_rate)).quantize(Decimal('1'))
+        owner_payout = max(rental_income - booking.commission_amount, Decimal('0'))
         if owner_payout > 0:
             credit_wallet(
                 owner, owner_payout, WalletTransaction.TYPE_RENT_PAYOUT, booking,

@@ -1,3 +1,5 @@
+from decimal import Decimal
+
 from drf_spectacular.utils import extend_schema_field
 from rest_framework import serializers
 from django.utils.dateparse import parse_date
@@ -228,6 +230,21 @@ class ItemUpdateSerializer(serializers.ModelSerializer):
             'is_negotiable', 'attributes',
         ]
 
+    # Поля, которые видит покупатель и которые прошли модерацию. Правка любого из
+    # них у одобренного объявления возвращает его на модерацию: иначе можно
+    # пройти проверку с безобидным текстом и сразу подменить его чем угодно.
+    MODERATED_FIELDS = ('title', 'description', 'category', 'attributes', 'address', 'district', 'city')
+
+    def validate_price_per_day(self, value):
+        if value <= 0:
+            raise serializers.ValidationError('Цена должна быть больше нуля.')
+        return value
+
+    def validate_deposit(self, value):
+        if value < 0:
+            raise serializers.ValidationError('Залог не может быть отрицательным.')
+        return value
+
     def validate_attributes(self, value):
         return validate_item_attributes(value)
 
@@ -238,6 +255,17 @@ class ItemUpdateSerializer(serializers.ModelSerializer):
         if value not in [Item.STATUS_INACTIVE, Item.STATUS_PENDING]:
             raise serializers.ValidationError('Владелец может снять объявление или отправить его на повторную модерацию.')
         return value
+
+    def update(self, instance, validated_data):
+        request = self.context.get('request')
+        is_staff = bool(request and request.user and request.user.is_staff)
+        changed = any(
+            field in validated_data and validated_data[field] != getattr(instance, field)
+            for field in self.MODERATED_FIELDS
+        )
+        if changed and not is_staff and instance.status == Item.STATUS_APPROVED and 'status' not in validated_data:
+            validated_data['status'] = Item.STATUS_PENDING
+        return super().update(instance, validated_data)
 
 
 class ListingModerationSerializer(serializers.Serializer):
@@ -316,6 +344,11 @@ class OfferSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = ['id', 'renter', 'status', 'proposed_by', 'created_at']
 
+    def validate_amount(self, value):
+        if value <= 0:
+            raise serializers.ValidationError('Цена должна быть больше нуля.')
+        return value
+
     @extend_schema_field(serializers.URLField(allow_null=True))
     def get_item_image(self, obj):
         image = obj.item.primary_image
@@ -340,7 +373,7 @@ class OfferRespondSerializer(serializers.Serializer):
     ACTION_CHOICES = [ACTION_ACCEPT, ACTION_REJECT, ACTION_COUNTER]
 
     action = serializers.ChoiceField(choices=ACTION_CHOICES)
-    amount = serializers.DecimalField(max_digits=12, decimal_places=0, required=False)
+    amount = serializers.DecimalField(max_digits=12, decimal_places=0, required=False, min_value=Decimal('1'))
 
     def validate(self, attrs):
         if attrs['action'] == self.ACTION_COUNTER and not attrs.get('amount'):

@@ -26,7 +26,10 @@ from .serializers import (
     DealPreviewSerializer,
     DisputeResolutionSerializer,
     DisputeSerializer,
+    PayoutPreviewQuerySerializer,
+    PayoutPreviewResponseSerializer,
     compute_pricing,
+    payout_preview,
     refresh_user_rating,
     require_handover_photo,
 )
@@ -81,9 +84,11 @@ def verification_required_response():
     summary='Предпросмотр стоимости сделки',
     description=(
         'Тело: {"item", "start_date", "end_date"}. Тот же расчёт, что при создании '
-        'сделки (days, price_per_day, deposit, commission_amount, total_price), но '
-        'ничего не создаёт и не проверяет занятость дат — только цена, до отправки '
-        'запроса. Доступен без KYC: это витрина, а не бронирование.\n\n'
+        'сделки, но ничего не создаёт и не проверяет занятость дат. Доступен без KYC.\n\n'
+        'Модель B: total_price = аренда + залог; комиссия (commission_amount) удерживается '
+        'из выплаты владельцу (owner_payout), сверху не добавляется. Если у вызывающего '
+        'есть принятое предложение цены по этому объявлению, price_per_day — согласованная '
+        'цена и offer_id указывает на него.\n\n'
         '400 — объявления нет/оно не approved (стандартная ошибка поля item), '
         'либо дата начала позже даты конца.'
     ),
@@ -95,8 +100,28 @@ class DealPreviewView(APIView):
         serializer = DealPreviewSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         data = serializer.validated_data
-        pricing = compute_pricing(data['item'], data['start_date'], data['end_date'])
+        pricing = compute_pricing(data['item'], data['start_date'], data['end_date'], renter=request.user)
         return Response(DealPreviewResponseSerializer(pricing).data)
+
+
+@extend_schema(
+    parameters=[PayoutPreviewQuerySerializer],
+    responses={200: PayoutPreviewResponseSerializer, 400: DetailSerializer},
+    summary='Сколько получит владелец',
+    description=(
+        '?price_per_day=<сум>&days=<дней, по умолчанию 1>. Комиссия платформы '
+        '(PLATFORM_COMMISSION_PERCENT) удерживается из выплаты — для подсказки '
+        '«вы получите X» в форме объявления. Без авторизации.'
+    ),
+)
+class PayoutPreviewView(APIView):
+    permission_classes = [permissions.AllowAny]
+
+    def get(self, request):
+        serializer = PayoutPreviewQuerySerializer(data=request.query_params)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+        return Response(PayoutPreviewResponseSerializer(payout_preview(data['price_per_day'], data['days'])).data)
 
 
 @extend_schema_view(

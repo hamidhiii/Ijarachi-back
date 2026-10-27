@@ -33,10 +33,13 @@ def make_item(owner, price=Decimal('100000'), deposit=Decimal('50000')):
 
 
 def make_booking(item, renter, start=date(2030, 6, 10), end=date(2030, 6, 12), status=Booking.STATUS_DRAFT, **extra):
+    from apps.bookings.serializers import platform_commission_rate
+
+    # Модель B: комиссия удерживается из выплаты, арендатор платит аренду + залог.
     days = (end - start).days + 1
     rent = item.price_per_day * days
-    commission = (rent * Decimal('0.10')).quantize(Decimal('1'))
-    total = rent + commission + item.deposit
+    commission = (rent * platform_commission_rate()).quantize(Decimal('1'))
+    total = rent + item.deposit
     fields = dict(
         item=item,
         renter=renter,

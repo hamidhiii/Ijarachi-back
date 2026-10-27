@@ -388,6 +388,10 @@ class ItemImageUploadView(APIView):
         serializer = ItemImageUploadSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         image = serializer.save(item=item)
+        if item.status == Item.STATUS_APPROVED and not request.user.is_staff:
+            # Новое фото — новый контент: одобренное объявление уходит на повторную модерацию.
+            item.status = Item.STATUS_PENDING
+            item.save(update_fields=['status', 'updated_at'])
         return Response(
             ItemImageSerializer(image, context={'request': request}).data,
             status=status.HTTP_201_CREATED,
@@ -469,6 +473,15 @@ class OfferListCreateView(generics.ListCreateAPIView):
             raise ValidationError({'code': 'offer_own_item', 'detail': 'Нельзя предложить цену на собственное объявление.'})
         if not item.is_negotiable:
             raise ValidationError({'code': 'offer_not_negotiable', 'detail': 'Владелец не отметил это объявление как готовое к торгу.'})
+        latest = Offer.objects.filter(item=item, renter=self.request.user).order_by('-created_at', '-pk').first()
+        if latest is not None and latest.status == Offer.STATUS_PENDING:
+            # Одна открытая ставка на ветку: ответить или встречно предложить
+            # можно через respond, а не новой строкой рядом.
+            raise ValidationError({
+                'code': 'offer_pending_exists',
+                'detail': 'По этому объявлению уже есть предложение без ответа.',
+                'offer_id': latest.pk,
+            })
 
         offer = serializer.save(
             item=item, renter=self.request.user,

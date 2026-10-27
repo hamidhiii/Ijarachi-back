@@ -132,7 +132,13 @@ class Booking(models.Model):
 
     # Pricing snapshot at booking time
     price_per_day = models.DecimalField('Цена/день', max_digits=12, decimal_places=0)
+    # Принятое предложение цены, по которому посчитана сделка (null — цена объявления).
+    offer = models.ForeignKey(
+        'catalog.Offer', on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='bookings', verbose_name='Торг',
+    )
     deposit_amount = models.DecimalField('Залог', max_digits=12, decimal_places=0)
+    # Комиссия удерживается из выплаты владельцу (модель B), арендатор её не доплачивает.
     commission_amount = models.DecimalField('Комиссия платформы', max_digits=12, decimal_places=0)
     total_price = models.DecimalField('Итого', max_digits=12, decimal_places=0)
 

@@ -203,6 +203,8 @@ SIMPLE_JWT = {
     # одновременно, поэтому JWT переехал на свой заголовок: X-Auth-Token.
     'AUTH_HEADER_NAME': 'HTTP_X_AUTH_TOKEN',
     'SIGNING_KEY': config('JWT_SIGNING_KEY', default=SECRET_KEY),
+    # Обновление токена отказывает заблокированному пользователю (стандартный — нет).
+    'TOKEN_REFRESH_SERIALIZER': 'apps.users.serializers.ActiveUserTokenRefreshSerializer',
 }
 
 # ─── CORS ─────────────────────────────────────────────────────────────────────
@@ -408,11 +410,15 @@ BOOKING_REQUIRE_HANDOVER_PHOTO = config('BOOKING_REQUIRE_HANDOVER_PHOTO', defaul
 BOOKING_MAX_DAYS = config('BOOKING_MAX_DAYS', default=365, cast=int)
 
 # Platform commission (%)
-PLATFORM_COMMISSION_PERCENT = config('PLATFORM_COMMISSION_PERCENT', default=10, cast=int)
+# Комиссия платформы, %. Модель B: удерживается из выплаты владельцу, арендатор
+# платит цену владельца без надбавки (решение 27.10.2026 — 15 %).
+PLATFORM_COMMISSION_PERCENT = config('PLATFORM_COMMISSION_PERCENT', default=15, cast=int)
 
 # OTP settings
 OTP_EXPIRY_SECONDS = config('OTP_EXPIRY_SECONDS', default=120, cast=int)
 OTP_RESEND_COOLDOWN_SECONDS = config('OTP_RESEND_COOLDOWN_SECONDS', default=60, cast=int)
+# Сколько неверных вводов выдерживает код, прежде чем погаснуть.
+OTP_MAX_ATTEMPTS = config('OTP_MAX_ATTEMPTS', default=5, cast=int)
 
 # ─── Telegram OTP-бот (временная замена SMS) ──────────────────────────────────
 
@@ -435,6 +441,14 @@ VAPID_PUBLIC_KEY = config('VAPID_PUBLIC_KEY', default='')
 # "sub" в JWT VAPID-заголовка — по спецификации обязателен, провайдеры (FCM и
 # т.п.) используют его, чтобы связаться с отправителем при проблемах.
 VAPID_CLAIM_EMAIL = config('VAPID_CLAIM_EMAIL', default='mailto:admin@rentoo.uz')
+# Куда сервер вправе слать Web Push: домены push-сервисов браузеров (и их
+# поддомены). Остальные endpoint-ы подписки отклоняются — защита от SSRF.
+WEB_PUSH_ALLOWED_HOSTS = [
+    host.strip().lower() for host in config(
+        'WEB_PUSH_ALLOWED_HOSTS',
+        default='fcm.googleapis.com,updates.push.services.mozilla.com,push.apple.com,notify.windows.com',
+    ).split(',') if host.strip()
+]
 
 # ─── Swagger/Redoc ────────────────────────────────────────────────────────────
 

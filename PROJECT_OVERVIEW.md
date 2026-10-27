@@ -33,6 +33,9 @@ Docker: `cp .env.example .env && docker compose up -d --build` (миграции
 `stub` сервер, воркер и `manage.py` **не стартуют** (`ImproperlyConfigured` из
 `PaymentsConfig.ready`), а сами заглушки ещё раз проверяют режим в момент
 подтверждения. Умолчание `PAYMENTS_MODE`: stub там, где можно, иначе off.
+Так же в `prod` сервер не стартует без своего `SECRET_KEY` (ключ по умолчанию
+лежит в репозитории, им подписываются JWT). Порт 8000 в docker-compose открыт
+только на `127.0.0.1` — снаружи приложение доступно лишь через nginx.
 
 ## 2. Карта репозитория
 
@@ -56,6 +59,23 @@ Docker: `cp .env.example .env && docker compose up -d --build` (миграции
 → paid → in_progress → returned → completed`, плюс `cancelled` и `disputed`.
 Переходы и кто их делает — `BookingStatusUpdateSerializer.ALLOWED_TRANSITIONS`
 и описание `PATCH /deals/{id}/status/` в Swagger.
+
+**Цена** — `compute_pricing` в [apps/bookings/serializers.py](apps/bookings/serializers.py),
+модель B: арендатор платит цену владельца × дни + залог; комиссия
+`PLATFORM_COMMISSION_PERCENT` (15 %) удерживается из выплаты владельцу и
+фиксируется в сделке (`commission_amount`). Если у арендатора есть принятое
+предложение цены (`Offer`, последняя строка ветки — accepted), сделка считается
+от согласованной цены и ссылается на него (`Booking.offer`). Подсказка «вы
+получите X» для формы объявления — `GET /api/v1/pricing/payout/?price_per_day=&days=`.
+Даты брони: начало не в прошлом, не короче `min_rental_days` объявления.
+
+**Торг** ([apps/catalog/views.py](apps/catalog/views.py)): сумма > 0; в ветке
+(объявление, арендатор) одна ставка без ответа — новая до ответа даёт 400
+`offer_pending_exists`.
+
+**Модерация**: правка у одобренного объявления названия, описания, категории,
+характеристик или адреса, а также новое фото возвращают его в `pending`
+(цену и залог можно менять без модерации). Правки сотрудника — без.
 
 **Занятость дат** — [apps/bookings/availability.py](apps/bookings/availability.py).
 Даты занимает сама бронь, пока она в `pending_payment`, `paid` или `in_progress`.
@@ -105,8 +125,8 @@ Docker: `cp .env.example .env && docker compose up -d --build` (миграции
 Расчёт — [apps/bookings/settlement.py](apps/bookings/settlement.py):
 
 - **Сделка завершена** (`returned → completed` владельцем, задача `release_escrow`
-  после коммита): аренда минус комиссия — в кошелёк владельцу, залог целиком —
-  в кошелёк арендатору.
+  после коммита): аренда минус комиссия, зафиксированная в сделке, — в кошелёк
+  владельцу, залог целиком — в кошелёк арендатору.
 - **Спор** закрывает сотрудник: `POST /deals/{id}/resolve-dispute/`
   `{"deposit_withheld": <сум>, "comment": ""}`. Удержанная часть залога —
   владельцу, остаток — арендатору, сделка — `completed`.
@@ -125,11 +145,28 @@ Docker: `cp .env.example .env && docker compose up -d --build` (миграции
 ## 6. Вход и Telegram-бот
 
 Вход по OTP (`/auth/send-otp/`, `/auth/verify-otp/`), коды доставляет
-Telegram-бот (SMS Eskiz — запасной путь). Номер привязывается к чату, когда
+Telegram-бот (SMS Eskiz — запасной путь). Код генерируется через `secrets`; после
+`OTP_MAX_ATTEMPTS` (5) неверных вводов все живые коды номера гаснут
+(`otp_attempts_exceeded`, нужен новый) — общий хелпер `apps/users/otp.check_code`,
+он же для смены телефона.
+
+**Блокировка** (`PATCH /admin-api/users/{id}/status/`): заблокированный получает
+403 `user_blocked` на входе по OTP, его refresh-токены отзываются, обновление
+токена отказывает (`ActiveUserTokenRefreshSerializer`), WebSocket не подключается. Номер привязывается к чату, когда
 пользователь делится контактом **с кнопки бота**: контакт принимается только
 если `contact.user_id == from.id`. Контакт из записной книжки (без `user_id`)
 или чужой — отказ, без привязки и без кода
 ([apps/users/views/telegram.py](apps/users/views/telegram.py)).
+
+## 6a. Чат и уведомления
+
+Номера сторон (`sender_phone`, `participant_phones`) в чате видны только в
+диалоге по сделке с раскрытыми контактами (`contact_revealed_at` — после оплаты
+или принятия брони за наличные); свой номер — всегда. То же в WebSocket.
+
+Web Push: `endpoint` подписки — только HTTPS к push-сервисам из
+`WEB_PUSH_ALLOWED_HOSTS` (FCM, Mozilla, Apple, Windows), иначе 400; старые
+подписки на чужие адреса задача рассылки удаляет, не обращаясь к ним (SSRF).
 
 ## 7. Проверка личности (KYC, MyID)
 
@@ -156,7 +193,8 @@ python manage.py test --settings=core.settings_test
   сделки, подпись Complete у Click без `merchant_prepare_id`, ответы Payme не
   по спецификации. Поэтому `live` пока включать нельзя.
 - Кошелёк — внутренний учёт: вывода денег на карту нет.
-- Даты брони в прошлом не запрещены; `min_rental_days` не проверяется.
-- Телефоны участников видны в чате до оплаты (`sender_phone`, `participant_phones`).
+- Номер телефона в тексте сообщения или описании не фильтруется — только поля API.
+- N+1 в списке объявлений (рейтинг, отзывы, избранное — по запросу на строку)
+  и тяжёлый список диалогов.
 - Сигнал создания профиля в `UsersConfig.ready` регистрируется со слабой
   ссылкой и не срабатывает; профиль создаётся явно при входе по OTP.

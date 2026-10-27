@@ -3,6 +3,7 @@ import logging
 from django.conf import settings
 from drf_spectacular.utils import extend_schema, extend_schema_view
 from rest_framework import generics, status
+from rest_framework.exceptions import NotFound
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -65,7 +66,7 @@ class ConversationListCreateView(APIView):
     ]
 
     def get(self, request):
-        qs = Conversation.objects.filter(participants=request.user).select_related('listing').prefetch_related('participants', 'messages', 'listing__images')
+        qs = Conversation.objects.filter(participants=request.user).select_related('listing', 'deal').prefetch_related('participants', 'messages', 'listing__images')
         return Response(ConversationSerializer(qs, many=True, context={'request': request}).data)
 
     def post(self, request):
@@ -107,7 +108,7 @@ class ConversationListCreateView(APIView):
         conversation.participants.add(request.user, item.owner)
         conversation = (
             Conversation.objects
-            .select_related('listing').prefetch_related('participants', 'messages', 'listing__images')
+            .select_related('listing', 'deal').prefetch_related('participants', 'messages', 'listing__images')
             .get(pk=conversation.pk)
         )
         return Response(
@@ -135,7 +136,7 @@ class ConversationListCreateView(APIView):
 
         conversation = (
             Conversation.objects
-            .select_related('listing').prefetch_related('participants', 'messages', 'listing__images')
+            .select_related('listing', 'deal').prefetch_related('participants', 'messages', 'listing__images')
             .get(pk=conversation.pk)
         )
         return Response(
@@ -152,10 +153,13 @@ class MessageListView(generics.ListCreateAPIView):
         return Message.objects.filter(
             conversation_id=self.kwargs['pk'],
             conversation__participants=self.request.user,
-        ).select_related('sender', 'conversation')
+        ).select_related('sender', 'conversation__deal')
 
     def perform_create(self, serializer):
-        conversation = Conversation.objects.get(pk=self.kwargs['pk'], participants=self.request.user)
+        conversation = Conversation.objects.filter(pk=self.kwargs['pk'], participants=self.request.user).first()
+        if conversation is None:
+            # Чужой или несуществующий диалог — 404, а не 500 от DoesNotExist.
+            raise NotFound({'code': 'conversation_not_found', 'detail': 'Диалог не найден.'})
         message = serializer.save(conversation=conversation, sender=self.request.user)
         conversation.save(update_fields=['updated_at'])
 

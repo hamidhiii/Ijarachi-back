@@ -1,5 +1,6 @@
 """
-Режимы заглушек оплаты и MyID и где они разрешены.
+Режимы заглушек оплаты и MyID и где они разрешены, плюс проверки боевой
+конфигурации, без которых сервер не должен стартовать (SECRET_KEY).
 
 Заглушка подтверждает оплату или личность без денег и без документов. Это
 нужно для разработки и стенда, но на боевом сервере превращается в бесплатные
@@ -48,6 +49,12 @@ def validate_runtime_modes():
         raise ImproperlyConfigured(
             f'MYID_MODE={settings.MYID_MODE!r}: допустимо одно из {", ".join(MYID_MODES)} '
             '(интеграции с MyID пока нет).'
+        )
+    if settings.APP_ENV == 'prod' and settings.SECRET_KEY.startswith('django-insecure'):
+        # Ключ по умолчанию лежит в открытом репозитории, им же подписываются
+        # JWT: с ним любой выпишет себе токен на чужой аккаунт.
+        raise ImproperlyConfigured(
+            'SECRET_KEY не задан: в prod нельзя стартовать с ключом по умолчанию.'
         )
     if settings.PAYMENTS_MODE == 'stub' and not stub_allowed():
         raise ImproperlyConfigured(

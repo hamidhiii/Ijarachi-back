@@ -6,14 +6,37 @@ from core.schema import UserMiniSerializer
 from apps.bookings.serializers import ListingMiniSerializer, _serialize_listing_mini
 
 
+def contacts_revealed(conversation) -> bool:
+    """
+    Номера сторон видны только в диалоге по сделке, где контакты уже раскрыты
+    (оплата прошла или владелец принял бронь за наличные). В переписке до
+    брони телефон позволял договориться мимо платформы.
+    """
+    deal = conversation.deal if conversation.deal_id else None
+    return deal is not None and deal.contact_revealed_at is not None
+
+
+def _viewer(context):
+    user = getattr(context.get('request'), 'user', None)
+    return user if user is not None and user.is_authenticated else None
+
+
 class MessageSerializer(serializers.ModelSerializer):
     sender = serializers.SerializerMethodField()
-    sender_phone = serializers.CharField(source='sender.phone', read_only=True)
+    sender_phone = serializers.SerializerMethodField()
 
     class Meta:
         model = Message
         fields = ['id', 'conversation', 'sender', 'sender_phone', 'text', 'image', 'is_read', 'created_at']
         read_only_fields = ['conversation', 'sender', 'sender_phone', 'is_read', 'created_at']
+
+    @extend_schema_field(serializers.CharField(allow_null=True))
+    def get_sender_phone(self, obj):
+        """Свой номер — всегда; чужой — только после раскрытия контактов по сделке."""
+        viewer = _viewer(self.context)
+        if viewer is not None and viewer.pk == obj.sender_id:
+            return obj.sender.phone
+        return obj.sender.phone if contacts_revealed(obj.conversation) else None
 
     @extend_schema_field(UserMiniSerializer)
     def get_sender(self, obj):
@@ -58,7 +81,13 @@ class ConversationSerializer(serializers.ModelSerializer):
 
     @extend_schema_field(serializers.ListField(child=serializers.CharField()))
     def get_participant_phones(self, obj):
-        return list(obj.participants.values_list('phone', flat=True))
+        """Свой номер — всегда; номера остальных — только после раскрытия контактов."""
+        viewer = _viewer(self.context)
+        revealed = contacts_revealed(obj)
+        return [
+            p.phone for p in obj.participants.all()
+            if revealed or (viewer is not None and p.pk == viewer.pk)
+        ]
 
     @extend_schema_field(UserMiniSerializer(allow_null=True))
     def get_interlocutor(self, obj):
