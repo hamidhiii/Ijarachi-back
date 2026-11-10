@@ -1,9 +1,12 @@
 from decimal import Decimal
 
+from django.db import transaction
+
 from drf_spectacular.utils import extend_schema_field
 from rest_framework import serializers
 from django.utils.dateparse import parse_date
 
+from .limits import enforce_listing_limit
 from .models import Category, Favorite, Item, ItemImage, ItemAvailability, Offer
 from core.schema import OwnerMiniSerializer, UserMiniSerializer
 from apps.bookings.serializers import _serialize_listing_mini, _serialize_user_mini
@@ -85,12 +88,14 @@ def _serialize_owner(item, request):
             # Название магазина — то, под чем продавец показывается на карточках;
             # пустое, пока он его не задал (тогда клиент берёт full_name).
             'shop_name': profile.shop_name,
+            # private | shop — по нему карточка ставит бейдж «Магазин».
+            'account_type': profile.account_type,
             'avatar': avatar,
             'rating': profile.rating,
             'verified': bool(profile.is_verified_kyc),
         }
     except Exception:
-        return {'id': item.owner.id, 'full_name': '', 'rating': 0, 'verified': False}
+        return {'id': item.owner.id, 'full_name': '', 'rating': 0, 'verified': False, 'account_type': 'private'}
 
 
 class ItemListSerializer(serializers.ModelSerializer):
@@ -212,9 +217,13 @@ class ItemCreateSerializer(serializers.ModelSerializer):
 
     def create(self, validated_data):
         user = self.context['request'].user
-        item = Item.objects.create(owner=user, status=Item.STATUS_PENDING, **validated_data)
-        # Create empty availability record
-        ItemAvailability.objects.create(item=item)
+        with transaction.atomic():
+            # Частник — до LISTING_LIMIT_PRIVATE объявлений в работе, магазин — до
+            # LISTING_LIMIT_SHOP; проверка под блокировкой пользователя.
+            enforce_listing_limit(user)
+            item = Item.objects.create(owner=user, status=Item.STATUS_PENDING, **validated_data)
+            # Create empty availability record
+            ItemAvailability.objects.create(item=item)
         return item
 
 
@@ -265,6 +274,17 @@ class ItemUpdateSerializer(serializers.ModelSerializer):
         )
         if changed and not is_staff and instance.status == Item.STATUS_APPROVED and 'status' not in validated_data:
             validated_data['status'] = Item.STATUS_PENDING
+        # Снятое или отклонённое, отправленное снова на модерацию, опять
+        # занимает место в лимите — иначе лимит обходится «снял → вернул».
+        reviving = (
+            not is_staff
+            and validated_data.get('status') == Item.STATUS_PENDING
+            and instance.status not in (Item.STATUS_PENDING, Item.STATUS_APPROVED)
+        )
+        if reviving:
+            with transaction.atomic():
+                enforce_listing_limit(instance.owner)
+                return super().update(instance, validated_data)
         return super().update(instance, validated_data)
 
 

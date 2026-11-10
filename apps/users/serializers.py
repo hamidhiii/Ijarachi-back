@@ -2,6 +2,7 @@ import re
 
 from drf_spectacular.utils import extend_schema_field
 from rest_framework import serializers
+from rest_framework.exceptions import ValidationError
 from rest_framework_simplejwt.serializers import TokenRefreshSerializer
 from rest_framework_simplejwt.tokens import RefreshToken
 from django.contrib.auth import get_user_model
@@ -74,12 +75,17 @@ class ProfileSerializer(serializers.ModelSerializer):
     role = serializers.SerializerMethodField()
     telegram_connected = serializers.SerializerMethodField()
     telegram_deep_link = serializers.SerializerMethodField()
+    # Сколько объявлений может быть в работе (на модерации + опубликовано) и
+    # сколько уже есть — по типу аккаунта, см. apps.catalog.limits.
+    listing_limit = serializers.IntegerField(read_only=True)
+    live_listings = serializers.SerializerMethodField()
 
     class Meta:
         model = Profile
         fields = [
             'id', 'phone', 'email', 'full_name', 'avatar',
-            'shop_name', 'about', 'location',
+            'account_type', 'shop_name', 'about', 'location', 'working_hours',
+            'listing_limit', 'live_listings',
             'rating', 'verified', 'role',
             'notify_telegram', 'telegram_connected', 'telegram_deep_link',
             # Доп. поля для обратной совместимости с мобильным клиентом.
@@ -116,7 +122,23 @@ class ProfileSerializer(serializers.ModelSerializer):
             return None
         return build_deep_link(obj.user.phone)
 
+    @extend_schema_field(serializers.IntegerField())
+    def get_live_listings(self, obj):
+        from apps.catalog.limits import live_listing_count
+        return live_listing_count(obj.user)
+
     def update(self, instance, validated_data):
+        # Магазин без названия — пустая плашка на каждой карточке. Проверяется
+        # итоговое состояние: и при переключении, и при стирании названия у
+        # уже переключённого магазина. Здесь, а не в validate(): оттуда ошибка
+        # уходит списками, а API отвечает плоским {code, detail}.
+        account_type = validated_data.get('account_type', instance.account_type)
+        shop_name = validated_data.get('shop_name', instance.shop_name)
+        if account_type == Profile.ACCOUNT_SHOP and not (shop_name or '').strip():
+            raise ValidationError({
+                'code': 'shop_name_required',
+                'detail': 'Чтобы стать магазином, укажите название магазина.',
+            })
         user_data = validated_data.pop('user', {})
         if 'email' in user_data:
             instance.user.email = user_data['email']
@@ -136,15 +158,19 @@ class PublicUserSerializer(serializers.ModelSerializer):
     shop_name = serializers.SerializerMethodField()
     about = serializers.SerializerMethodField()
     location = serializers.SerializerMethodField()
+    account_type = serializers.SerializerMethodField()
+    working_hours = serializers.SerializerMethodField()
 
     class Meta:
         model = User
         fields = [
             'id',
             'full_name',
+            'account_type',
             'shop_name',
             'about',
             'location',
+            'working_hours',
             'avatar',
             'rating',
             'verified',
@@ -168,6 +194,19 @@ class PublicUserSerializer(serializers.ModelSerializer):
     @extend_schema_field(serializers.CharField())
     def get_location(self, obj):
         return getattr(getattr(obj, 'profile', None), 'location', '') or ''
+
+    @extend_schema_field(serializers.ChoiceField(choices=[c for c, _ in Profile.ACCOUNT_TYPE_CHOICES]))
+    def get_account_type(self, obj):
+        return getattr(getattr(obj, 'profile', None), 'account_type', Profile.ACCOUNT_PRIVATE)
+
+    @extend_schema_field(serializers.CharField())
+    def get_working_hours(self, obj):
+        # Часы работы — часть витрины магазина; у частника их не показываем,
+        # даже если остались с тех пор, как он был магазином.
+        profile = getattr(obj, 'profile', None)
+        if not profile or not profile.is_shop:
+            return ''
+        return profile.working_hours or ''
 
     @extend_schema_field(serializers.URLField(allow_null=True))
     def get_avatar(self, obj):

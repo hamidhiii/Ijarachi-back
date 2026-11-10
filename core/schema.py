@@ -14,8 +14,11 @@ class UserMiniSerializer(serializers.Serializer):
 
 
 class OwnerMiniSerializer(serializers.Serializer):
-    """Владелец объявления: {id, full_name, rating, verified}."""
+    """Владелец объявления: {id, full_name, shop_name, account_type, avatar, rating, verified}."""
     id = serializers.IntegerField()
     full_name = serializers.CharField()
+    shop_name = serializers.CharField(required=False)
+    account_type = serializers.ChoiceField(choices=['private', 'shop'], required=False)
+    avatar = serializers.URLField(allow_null=True, required=False)
     rating = serializers.FloatField()
     verified = serializers.BooleanField()

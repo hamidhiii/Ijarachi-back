@@ -52,7 +52,21 @@ class Profile(models.Model):
         (VERIFICATION_VERIFIED, 'Верифицирован'),
     ]
 
+    # Тип аккаунта (решение 27.10.2026). Частное лицо сдаёт свои вещи, магазин
+    # (прокат, салон) переключается сам в настройках и получает больше: выше
+    # лимит объявлений, бейдж «Магазин», часы работы на витрине и сводную
+    # статистику. Один аккаунт по-прежнему может и сдавать, и арендовать.
+    ACCOUNT_PRIVATE = 'private'
+    ACCOUNT_SHOP = 'shop'
+    ACCOUNT_TYPE_CHOICES = [
+        (ACCOUNT_PRIVATE, 'Частное лицо'),
+        (ACCOUNT_SHOP, 'Магазин'),
+    ]
+
     user = models.OneToOneField(CustomUser, on_delete=models.CASCADE, related_name='profile')
+    account_type = models.CharField(
+        'Тип аккаунта', max_length=10, choices=ACCOUNT_TYPE_CHOICES, default=ACCOUNT_PRIVATE,
+    )
     full_name = models.CharField('ФИО', max_length=200, blank=True)
     avatar = models.ImageField('Аватар', upload_to='avatars/', blank=True, null=True)
     # Витрина продавца: то, что видят арендаторы на карточках и на публичной
@@ -60,6 +74,9 @@ class Profile(models.Model):
     shop_name = models.CharField('Название магазина / ник', max_length=60, blank=True)
     about = models.TextField('О себе', max_length=500, blank=True)
     location = models.CharField('Локация магазина', max_length=120, blank=True)
+    # Свободной строкой («Пн–Сб 10:00–20:00»): расписания бывают с перерывами и
+    # выходными, а структура пока никому не нужна, кроме глаз арендатора.
+    working_hours = models.CharField('Часы работы', max_length=120, blank=True)
     rating = models.FloatField('Рейтинг', default=0.0)
     rating_count = models.PositiveIntegerField('Кол-во оценок', default=0)
     wallet_balance = models.DecimalField('Баланс (сум)', max_digits=14, decimal_places=0, default=0)
@@ -81,6 +98,15 @@ class Profile(models.Model):
 
     def __str__(self):
         return f'Профиль — {self.user.phone}'
+
+    @property
+    def is_shop(self):
+        return self.account_type == self.ACCOUNT_SHOP
+
+    @property
+    def listing_limit(self):
+        from django.conf import settings
+        return settings.LISTING_LIMIT_SHOP if self.is_shop else settings.LISTING_LIMIT_PRIVATE
 
     def mark_kyc_verified(self):
         self.is_verified_kyc = True

@@ -206,6 +206,63 @@ class ListingStatsView(APIView):
         })
 
 
+class MyListingsStatsView(APIView):
+    """
+    GET /api/v1/listings/my/stats/
+    Сводная статистика по всем объявлениям — возможность магазина (решение
+    27.10.2026). Частнику 403 `shop_only`: статистика по одному объявлению
+    (/listings/{id}/stats/) остаётся доступной всем.
+
+    requests — заявки на аренду (все, кроме черновиков, отменённые тоже);
+    deals — оплаченные сделки. Снятые объявления не показываются.
+    """
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request):
+        from apps.bookings.models import Booking
+        from apps.users.models import Profile
+
+        profile, _ = Profile.objects.get_or_create(user=request.user)
+        if not profile.is_shop:
+            return Response(
+                {'code': 'shop_only', 'detail': 'Сводная статистика доступна магазинам.'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        paid = [
+            Booking.STATUS_PAID, Booking.STATUS_IN_PROGRESS, Booking.STATUS_RETURNED,
+            Booking.STATUS_COMPLETED, Booking.STATUS_DISPUTED,
+        ]
+        items = (
+            Item.objects
+            .filter(owner=request.user)
+            .exclude(status=Item.STATUS_INACTIVE)
+            .annotate(
+                requests=Count('bookings', filter=~Q(bookings__status=Booking.STATUS_DRAFT), distinct=True),
+                deals=Count('bookings', filter=Q(bookings__status__in=paid), distinct=True),
+            )
+            .order_by('-view_count', '-created_at')
+        )
+        rows = [
+            {
+                'id': item.pk,
+                'title': item.title,
+                'status': item.status,
+                'views': item.view_count,
+                'favorites': item.favorite_count,
+                'requests': item.requests,
+                'deals': item.deals,
+            }
+            for item in items
+        ]
+        totals = {
+            key: sum(row[key] for row in rows)
+            for key in ('views', 'favorites', 'requests', 'deals')
+        }
+        totals['listings'] = len(rows)
+        return Response({'totals': totals, 'listings': rows})
+
+
 class ListingAvailabilityView(APIView):
     permission_classes = [permissions.IsAuthenticatedOrReadOnly]
 

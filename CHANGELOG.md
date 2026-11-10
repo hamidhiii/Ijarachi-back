@@ -2,7 +2,21 @@
 
 Заметные изменения бэкенда Rentoo. Карта проекта — [PROJECT_OVERVIEW.md](PROJECT_OVERVIEW.md).
 
-## [Unreleased] — блок 2: важные исправления из обзора кода
+## [Unreleased] — тип аккаунта: частное лицо или магазин
+
+Ветка `feat/shop-account` (поверх `fix/block-2`). Решение 27.10.2026.
+
+- `Profile.account_type` (`private` / `shop`) и `working_hours`; переключение в
+  `PATCH /profile/`, магазину обязательно `shop_name` (`shop_name_required`).
+- Лимит объявлений в работе: частник 10, магазин 200 (`LISTING_LIMIT_PRIVATE`,
+  `LISTING_LIMIT_SHOP`); сверх — 400 `listing_limit`, в том числе при возврате
+  снятого объявления на модерацию. В профиле `listing_limit`, `live_listings`.
+- `owner.account_type` в объявлениях; `account_type`, `working_hours` в
+  публичном профиле.
+- `GET /listings/my/stats/` — сводная статистика, только магазину (`shop_only`).
+- Миграция переводит в магазины тех, кто уже держит больше 10 объявлений.
+
+## блок 2: важные исправления из обзора кода
 
 Ветка `fix/block-2` (поверх блока 1). Интеграции Click/Payme/MyID не входят.
 

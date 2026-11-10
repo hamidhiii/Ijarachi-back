@@ -12,6 +12,7 @@ from .views import (
     ListingModerationView,
     ListingReviewsView,
     ListingStatsView,
+    MyListingsStatsView,
     MyItemsView,
     ItemUpdateView,
     ItemImageUploadView,
@@ -22,6 +23,7 @@ from .views import (
 urlpatterns = [
     # Rentoo API contract
     path('listings/', ListingListCreateView.as_view(), name='listing-list-create'),
+    path('listings/my/stats/', MyListingsStatsView.as_view(), name='my-listings-stats'),
     path('listings/<int:pk>/', ListingDetailUpdateDestroyView.as_view(), name='listing-detail'),
     path('listings/<int:pk>/availability/', ListingAvailabilityView.as_view(), name='listing-availability'),
     path('listings/<int:pk>/reviews/', ListingReviewsView.as_view(), name='listing-reviews'),

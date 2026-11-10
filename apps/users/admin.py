@@ -28,9 +28,9 @@ class CustomUserAdmin(UserAdmin):
 
 @admin.register(Profile)
 class ProfileAdmin(admin.ModelAdmin):
-    list_display = ['user', 'full_name', 'rating', 'verification_status', 'is_verified_kyc', 'kyc_verified_at']
-    list_filter = ['verification_status', 'is_verified_kyc']
-    search_fields = ['user__phone', 'full_name']
+    list_display = ['user', 'full_name', 'account_type', 'shop_name', 'rating', 'verification_status', 'is_verified_kyc', 'kyc_verified_at']
+    list_filter = ['account_type', 'verification_status', 'is_verified_kyc']
+    search_fields = ['user__phone', 'full_name', 'shop_name']
     # Баланс меняется только через apps.payments.wallet.credit_wallet (с записью в журнал).
     readonly_fields = ['kyc_verified_at', 'wallet_balance']
 
