@@ -1,3 +1,4 @@
+import hmac
 import logging
 from datetime import timedelta
 
@@ -6,6 +7,7 @@ from django.http import Http404, HttpResponse
 from django.utils import timezone
 from rest_framework.views import APIView
 
+from .. import telegram_app_bot as app_bot
 from ..models import OTPCode, TelegramLink
 from ..otp import generate_otp
 from ..serializers import normalize_uz_phone
@@ -135,3 +137,31 @@ class TelegramWebhookView(APIView):
     @staticmethod
     def _reply(chat_id, text):
         send_telegram_message(chat_id, text, reply_markup={'remove_keyboard': True})
+
+
+class TelegramAppBotWebhookView(APIView):
+    """
+    POST /api/v1/telegram/webhook/app/
+    Обновления от @rentoo_app (бот Mini App). На /start и любой текст отвечает
+    приветствием с кнопкой «Открыть Rentoo». Подлинность — заголовок
+    X-Telegram-Bot-Api-Secret-Token (задаётся в setWebhook, см. setup_app_bot).
+    """
+    permission_classes = []
+    authentication_classes = []
+    # Все обновления приходят с немногих адресов Telegram — общий лимит 60/мин
+    # на IP начал бы терять приветствия при первом же наплыве.
+    throttle_classes = []
+
+    def post(self, request):
+        expected = app_bot.webhook_secret()
+        received = request.META.get('HTTP_X_TELEGRAM_BOT_API_SECRET_TOKEN', '')
+        if not expected or not hmac.compare_digest(expected, received):
+            raise Http404
+
+        message = (request.data or {}).get('message') or {}
+        chat = message.get('chat') or {}
+        # Только личные чаты: в группе приветствие на каждое сообщение — спам.
+        if chat.get('type') == 'private' and chat.get('id') and 'text' in message:
+            sender = message.get('from') or {}
+            app_bot.send_welcome(chat['id'], app_bot.language(sender.get('language_code')))
+        return HttpResponse(status=200)
