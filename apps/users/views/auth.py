@@ -20,6 +20,7 @@ from ..serializers import (
     PhoneChangeVerifySerializer,
 )
 from ..otp import generate_otp, send_otp, telegram_deep_link, telegram_link_required
+from ..telegram_webapp import link_for, verify_init_data
 from apps.monitoring import events
 from apps.monitoring.models import AuthEvent
 from rest_framework.exceptions import ValidationError
@@ -198,6 +199,63 @@ class RegisterView(SendOTPView):
 
 class LoginView(VerifyOTPView):
     """Compatibility endpoint for POST /api/v1/auth/login."""
+
+
+class TelegramWebAppLoginView(APIView):
+    """
+    POST /api/v1/auth/telegram/  {"init_data": "<Telegram.WebApp.initData>"}
+
+    Вход из Telegram Mini App без кода: подпись initData доказывает, какой
+    аккаунт Telegram открыл приложение, а TelegramLink — что этот аккаунт уже
+    подтвердил номер кнопкой «Отправить номер» в боте. Это то же доказательство,
+    на котором стоит OTP-вход (код уходит именно в этот чат), без лишнего шага.
+
+    404 `telegram_not_linked` — подпись верна, но номер ещё не подтверждён в
+    @Rentoo_auth_bot: один раз входим по коду, дальше Mini App входит сам.
+    """
+    permission_classes = []
+    authentication_classes = []
+    throttle_scope = 'auth'
+
+    def post(self, request):
+        tg_user = verify_init_data(str(request.data.get('init_data') or ''))
+        if tg_user is None:
+            events.record(request, AuthEvent.VERIFY_FAILED, detail='telegram_webapp: bad init_data')
+            return Response(
+                {'code': 'telegram_init_data_invalid', 'detail': 'Не удалось подтвердить вход через Telegram.'},
+                status=status.HTTP_401_UNAUTHORIZED,
+            )
+
+        link = link_for(tg_user.id)
+        if link is None:
+            return Response(
+                {'code': 'telegram_not_linked', 'detail': 'Поделитесь номером телефона в Telegram, чтобы войти.'},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        user, is_new = CustomUser.objects.get_or_create(phone=link.phone)
+        if is_new:
+            Profile.objects.create(user=user)
+            logger.info('New user registered via Telegram Mini App: %s', link.phone)
+        if not user.is_active:
+            return Response(
+                {'code': 'account_disabled', 'detail': 'Аккаунт отключён.'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        events.record(
+            request,
+            AuthEvent.REGISTER_OK if is_new else AuthEvent.LOGIN_OK,
+            phone=link.phone,
+            detail='telegram_webapp',
+        )
+
+        refresh = RefreshToken.for_user(user)
+        return Response({
+            'access': str(refresh.access_token),
+            'refresh': str(refresh),
+            'is_new_user': is_new,
+        })
 
 
 @extend_schema(

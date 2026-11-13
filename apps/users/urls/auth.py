@@ -7,6 +7,7 @@ from apps.users.views.auth import (
     PhoneChangeVerifyView,
     RegisterView,
     SendOTPView,
+    TelegramWebAppLoginView,
     VerifyOTPView,
 )
 
@@ -17,6 +18,7 @@ urlpatterns = [
     path('sms/verify/', VerifyOTPView.as_view(), name='auth-sms-verify'),
     path('send-otp/', SendOTPView.as_view(), name='auth-send-otp'),
     path('verify-otp/', VerifyOTPView.as_view(), name='auth-verify-otp'),
+    path('telegram/', TelegramWebAppLoginView.as_view(), name='auth-telegram-webapp'),
     path('refresh/', TokenRefreshView.as_view(), name='auth-token-refresh'),
     path('logout/', LogoutView.as_view(), name='auth-logout'),
     path('phone/change/send/', PhoneChangeSendView.as_view(), name='auth-phone-change-send'),

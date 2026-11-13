@@ -397,6 +397,10 @@ TELEGRAM_BOT_USERNAME = config('TELEGRAM_BOT_USERNAME', default='')
 TELEGRAM_API_BASE_URL = config('TELEGRAM_API_BASE_URL', default='https://api.telegram.org')
 # Секрет в пути вебхука (/api/v1/telegram/webhook/<secret>/), защищает от посторонних запросов
 TELEGRAM_WEBHOOK_SECRET = config('TELEGRAM_WEBHOOK_SECRET', default='')
+# Токен бота, из которого открывается Mini App (@rentoo_app). Telegram подписывает
+# initData токеном именно этого бота, а он не тот, что шлёт OTP (@Rentoo_auth_bot).
+# Пусто — проверяем только TELEGRAM_BOT_TOKEN.
+TELEGRAM_WEBAPP_BOT_TOKEN = config('TELEGRAM_WEBAPP_BOT_TOKEN', default='')
 # Если код не удалось отправить в Telegram (или номер ещё не привязан к боту) — падать в SMS
 OTP_SMS_FALLBACK_ENABLED = config('OTP_SMS_FALLBACK_ENABLED', default=False, cast=bool)
 
