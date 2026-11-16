@@ -1,6 +1,6 @@
 from django.contrib import admin
 
-from .models import BillingOrder, Plan, Subscription, SubscriptionPeriod
+from .models import BillingOrder, Plan, Promotion, Subscription, SubscriptionPeriod
 
 
 @admin.register(Plan)
@@ -58,6 +58,19 @@ class BillingOrderAdmin(admin.ModelAdmin):
                     'needs_attention', 'created_at', 'paid_at')
     list_filter = ('status', 'kind', 'provider')
     search_fields = ('user__phone', 'provider_transaction_id')
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_add_permission(self, request):
+        return False
+
+
+@admin.register(Promotion)
+class PromotionAdmin(admin.ModelAdmin):
+    list_display = ('item', 'kind', 'starts_at', 'ends_at', 'order')
+    list_filter = ('kind',)
+    search_fields = ('item__title', 'item__owner__phone')
 
     def has_change_permission(self, request, obj=None):
         return False

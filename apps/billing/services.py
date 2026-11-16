@@ -155,7 +155,8 @@ def check_order_payable(order):
             check_can_buy(order.user, order.plan)
         except BillingError as exc:
             raise OrderNotPayable(exc.detail['code']) from exc
-    elif order.item is None or order.item.owner_id != order.user_id:
+    elif order.item is None or order.item.owner_id != order.user_id or order.item.status != 'approved':
+        # Объявление сняли, отклонили или заблокировали, пока заказ ждал оплаты.
         raise OrderNotPayable('item')
 
 

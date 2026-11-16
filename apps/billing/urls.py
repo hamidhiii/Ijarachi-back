@@ -6,11 +6,13 @@ from .views import (
     OrderListCreateView,
     PaymeWebhookView,
     PlanListView,
+    PromotionListView,
     SubscriptionView,
 )
 
 urlpatterns = [
     path('plans/', PlanListView.as_view(), name='billing-plans'),
+    path('promotions/', PromotionListView.as_view(), name='billing-promotions'),
     path('subscription/', SubscriptionView.as_view(), name='billing-subscription'),
     path('orders/', OrderListCreateView.as_view(), name='billing-orders'),
     path('orders/<int:pk>/', OrderDetailView.as_view(), name='billing-order-detail'),

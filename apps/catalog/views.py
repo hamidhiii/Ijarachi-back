@@ -27,6 +27,7 @@ from .serializers import (
     OfferRespondSerializer,
 )
 from .filters import ItemFilter, filter_by_attributes
+from .ranking import search_ordering
 from core.feature_flags import DealFlowRequiredMixin
 
 logger = logging.getLogger('apps.catalog')
@@ -55,7 +56,9 @@ class ListingListCreateView(generics.ListCreateAPIView):
     filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
     search_fields = ['title', 'description', 'city']
     ordering_fields = ['price_per_day', 'created_at', 'view_count']
-    ordering = ['-created_at']
+    # Порядок по умолчанию задаёт get_queryset (VIP > топ > приоритет тарифа >
+    # дата); умолчание OrderingFilter перебило бы его.
+    ordering = None
 
     def get_permissions(self):
         if self.request.method == 'POST':
@@ -92,7 +95,14 @@ class ListingListCreateView(generics.ListCreateAPIView):
             qs = qs.order_by('price_per_day')
         elif ordering == '-price':
             qs = qs.order_by('-price_per_day')
+        elif not (ordering == 'relevance' and query) and ordering not in self._filter_orderings():
+            # Выдача по умолчанию: VIP > топ > приоритет BUSINESS/PRO > дата.
+            qs = qs.order_by(*search_ordering())
         return filter_by_attributes(qs, self.request.query_params)
+
+    def _filter_orderings(self):
+        # Значения, которые сам разберёт OrderingFilter (?ordering=-view_count).
+        return {f'{sign}{field}' for field in self.ordering_fields for sign in ('', '-')}
 
 
 class ItemListView(ListingListCreateView):

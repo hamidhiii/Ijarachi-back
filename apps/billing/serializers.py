@@ -14,6 +14,13 @@ class PlanSerializer(serializers.ModelSerializer):
         ]
 
 
+class PromotionOfferSerializer(serializers.Serializer):
+    kind = serializers.ChoiceField(choices=BillingOrder.PROMO_CHOICES)
+    name = serializers.CharField()
+    price = serializers.IntegerField()
+    days = serializers.IntegerField()
+
+
 class SubscriptionStateSerializer(serializers.Serializer):
     """GET /billing/subscription/ — что действует сейчас."""
     plan = PlanSerializer()

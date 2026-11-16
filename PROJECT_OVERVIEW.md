@@ -255,6 +255,21 @@ Web Push: `endpoint` подписки — только HTTPS к push-серви�
 день по местной дате; уведомление типа `billing` (WebSocket, Telegram, Web Push)
 со ссылкой на `OWNER_FRONTEND_BASE_URL/billing`. Обе задачи идемпотентны.
 
+**Продвижение** ([apps/billing/promotions.py](apps/billing/promotions.py)):
+«Поднять в топ» — `PROMO_TOP_PRICE` 30 000 сум на `PROMO_TOP_DAYS` 7 дней, VIP —
+`PROMO_VIP_PRICE` 80 000 на `PROMO_VIP_DAYS` 30 дней. Покупка — тот же заказ:
+`POST /billing/orders/` `{"kind": "promotion", "promotion": "top" | "vip", "listing": <id>, "provider": …}`,
+только своё опубликованное объявление (`LISTING_NOT_FOUND`, `LISTING_NOT_PUBLISHED`).
+Повторная покупка продлевает от текущего окончания. Действующее состояние —
+`Item.top_until` / `vip_until` (в карточке `is_top`, `is_vip`), история —
+`Promotion`. Цены и сроки — `GET /billing/promotions/`.
+
+**Порядок выдачи** `GET /listings/` по умолчанию —
+[apps/catalog/ranking.py](apps/catalog/ranking.py): VIP > топ > владелец на
+тарифе с приоритетом (BUSINESS/PRO, пока тариф действует) > дата. Явная
+сортировка (`ordering=price`, `-price`, `date`, `relevance`, поля
+OrderingFilter) работает как раньше.
+
 **Права тарифа** — `apps.billing.plans.require_feature(user, 'statistics' | 'staff_access' | 'branches' | 'data_export')`:
 403 `{"code": "PLAN_FEATURE_REQUIRED", "feature", "required_plan", "current_plan"}`.
 

@@ -216,3 +216,27 @@ class BillingOrder(models.Model):
         if self.kind == self.KIND_PLAN and self.plan_id:
             return f'Тариф {self.plan.name} на {settings.BILLING_PERIOD_DAYS} дней'
         return f'{self.get_promotion_display()}: «{self.item.title if self.item else "объявление"}»'
+
+
+class Promotion(models.Model):
+    """
+    История продвижения объявления: каждая оплата — строка. Действующее
+    состояние — Item.top_until / Item.vip_until, по ним сортируется выдача.
+    """
+    item = models.ForeignKey('catalog.Item', on_delete=models.CASCADE, related_name='promotions', verbose_name='Объявление')
+    kind = models.CharField('Вид', max_length=10, choices=BillingOrder.PROMO_CHOICES)
+    starts_at = models.DateTimeField('Начало')
+    ends_at = models.DateTimeField('Окончание')
+    order = models.OneToOneField(
+        BillingOrder, on_delete=models.PROTECT, null=True, blank=True,
+        related_name='promotion_record', verbose_name='Заказ',
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        verbose_name = 'Продвижение'
+        verbose_name_plural = 'Продвижения'
+        ordering = ['-starts_at']
+
+    def __str__(self):
+        return f'{self.get_kind_display()} #{self.item_id} до {self.ends_at:%d.%m.%Y}'

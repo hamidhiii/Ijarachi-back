@@ -1,6 +1,7 @@
 from decimal import Decimal
 
 from django.db import transaction
+from django.utils import timezone
 
 from drf_spectacular.utils import extend_schema_field
 from rest_framework import serializers
@@ -98,7 +99,21 @@ def _serialize_owner(item, request):
         return {'id': item.owner.id, 'full_name': '', 'rating': 0, 'verified': False, 'account_type': 'private'}
 
 
-class ItemListSerializer(serializers.ModelSerializer):
+class PromotionFlagsMixin(serializers.Serializer):
+    """Значки продвижения на карточке: действуют, пока срок не истёк."""
+    is_vip = serializers.SerializerMethodField()
+    is_top = serializers.SerializerMethodField()
+
+    @extend_schema_field(serializers.BooleanField())
+    def get_is_vip(self, obj):
+        return bool(obj.vip_until and obj.vip_until > timezone.now())
+
+    @extend_schema_field(serializers.BooleanField())
+    def get_is_top(self, obj):
+        return bool(obj.top_until and obj.top_until > timezone.now())
+
+
+class ItemListSerializer(PromotionFlagsMixin, serializers.ModelSerializer):
     """Serializer for the /listings/ list — matches the frontend Listing contract."""
     category = CategoryMiniSerializer(read_only=True)
     images = ItemImageSerializer(many=True, read_only=True)
@@ -113,7 +128,7 @@ class ItemListSerializer(serializers.ModelSerializer):
             'id', 'title', 'description', 'category',
             'price_per_day', 'deposit', 'condition',
             'address', 'city', 'district', 'latitude', 'longitude', 'min_rental_days',
-            'is_negotiable', 'quantity',
+            'is_negotiable', 'quantity', 'is_vip', 'is_top',
             'status', 'images', 'attributes', 'owner', 'rating', 'reviews_count',
             'view_count', 'favorite_count', 'is_favorite', 'created_at',
         ]
@@ -141,7 +156,7 @@ class ItemListSerializer(serializers.ModelSerializer):
         return Favorite.objects.filter(user=user, item=obj).exists()
 
 
-class ItemDetailSerializer(serializers.ModelSerializer):
+class ItemDetailSerializer(PromotionFlagsMixin, serializers.ModelSerializer):
     """Full serializer for single item view — matches the frontend Listing contract."""
     images = ItemImageSerializer(many=True, read_only=True)
     category = CategoryMiniSerializer(read_only=True)
@@ -158,6 +173,7 @@ class ItemDetailSerializer(serializers.ModelSerializer):
             'condition', 'status', 'city', 'district', 'address', 'latitude', 'longitude',
             'category', 'images', 'attributes', 'blocked_dates', 'owner', 'created_at',
             'view_count', 'favorite_count', 'min_rental_days', 'is_negotiable', 'quantity',
+            'is_vip', 'is_top', 'top_until', 'vip_until',
             'is_favorite', 'rating', 'reviews_count',
         ]
 

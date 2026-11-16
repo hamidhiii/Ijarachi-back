@@ -20,6 +20,7 @@ from .serializers import (
     OrderCreateSerializer,
     OrderSerializer,
     PlanSerializer,
+    PromotionOfferSerializer,
     SubscriptionStateSerializer,
     days_left,
 )
@@ -34,6 +35,17 @@ class PlanListView(generics.ListAPIView):
     serializer_class = PlanSerializer
     pagination_class = None
     queryset = Plan.objects.filter(is_active=True)
+
+
+class PromotionListView(APIView):
+    """GET /api/v1/billing/promotions/ — виды продвижения: цена и срок."""
+    permission_classes = [permissions.AllowAny]
+
+    @extend_schema(responses=PromotionOfferSerializer(many=True))
+    def get(self, request):
+        from .promotions import promotion_offers
+
+        return Response(PromotionOfferSerializer(promotion_offers(), many=True).data)
 
 
 class SubscriptionView(APIView):

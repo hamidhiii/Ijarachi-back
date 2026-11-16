@@ -433,6 +433,11 @@ PLATFORM_COMMISSION_PERCENT = config('PLATFORM_COMMISSION_PERCENT', default=15, 
 # (apps.billing): FREE 10, START 100, BUSINESS 300, PRO без лимита.
 # Сколько дней даёт одна оплата тарифа («месяц»).
 BILLING_PERIOD_DAYS = config('BILLING_PERIOD_DAYS', default=30, cast=int)
+# Платное продвижение объявления (решение 16.11.2026): цена в сумах и срок в днях.
+PROMO_TOP_PRICE = config('PROMO_TOP_PRICE', default=30000, cast=int)
+PROMO_TOP_DAYS = config('PROMO_TOP_DAYS', default=7, cast=int)
+PROMO_VIP_PRICE = config('PROMO_VIP_PRICE', default=80000, cast=int)
+PROMO_VIP_DAYS = config('PROMO_VIP_DAYS', default=30, cast=int)
 # Кабинет владельца (CRM, тарифы) — отдельный фронт. Отсюда ссылки в
 # уведомлениях о тарифе и адрес возврата после оплаты заказа.
 OWNER_FRONTEND_BASE_URL = config('OWNER_FRONTEND_BASE_URL', default='https://owner.rentoo.uz')
