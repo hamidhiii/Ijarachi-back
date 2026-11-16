@@ -251,3 +251,27 @@ class Offer(models.Model):
         """
         latest = cls.objects.filter(item=item, renter=renter).order_by('-created_at', '-pk').first()
         return latest if latest is not None and latest.status == cls.STATUS_ACCEPTED else None
+
+
+class PhoneReveal(models.Model):
+    """
+    Нажатие «Показать номер» (решение 16.11.2026): каждое нажатие — строка.
+    В статистику идут только `counted`: первое нажатие пользователя по
+    объявлению за 24 часа; нажатия владельца по своему объявлению не считаются.
+    """
+    item = models.ForeignKey(Item, on_delete=models.CASCADE, related_name='phone_reveals', verbose_name='Объявление')
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.CASCADE,
+        related_name='phone_reveals', verbose_name='Пользователь',
+    )
+    counted = models.BooleanField('Учитывается в статистике', default=True)
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+
+    class Meta:
+        verbose_name = 'Показ номера'
+        verbose_name_plural = 'Показы номера'
+        ordering = ['-created_at']
+        indexes = [models.Index(fields=['item', 'user', '-created_at'])]
+
+    def __str__(self):
+        return f'{self.user_id} → {self.item_id} {self.created_at:%d.%m.%Y %H:%M}'

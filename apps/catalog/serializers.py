@@ -418,3 +418,10 @@ class OfferRespondSerializer(serializers.Serializer):
         if attrs['action'] == self.ACTION_COUNTER and not attrs.get('amount'):
             raise serializers.ValidationError({'amount': 'Укажите цену встречного предложения.'})
         return attrs
+
+
+class PhoneRevealResponseSerializer(serializers.Serializer):
+    listing_id = serializers.IntegerField()
+    owner_id = serializers.IntegerField()
+    phone = serializers.CharField()
+    name = serializers.CharField()

@@ -1,5 +1,7 @@
 import logging
 
+from drf_spectacular.utils import extend_schema
+
 from rest_framework import generics, status, permissions
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -25,6 +27,7 @@ from .serializers import (
     ListingModerationSerializer,
     OfferSerializer,
     OfferRespondSerializer,
+    PhoneRevealResponseSerializer,
 )
 from .filters import ItemFilter, filter_by_attributes
 from .ranking import search_ordering
@@ -621,3 +624,41 @@ class OfferRespondView(DealFlowRequiredMixin, APIView):
             )
 
         return Response(OfferSerializer(offer, context={'request': request}).data)
+
+
+class ListingPhoneView(APIView):
+    """
+    POST /api/v1/listings/{id}/phone/ — «Показать номер» владельца.
+
+    Только для авторизованных. Каждое нажатие записывается (PhoneReveal:
+    объявление, пользователь, время); в статистику объявления идёт одно нажатие
+    пользователя за 24 часа, нажатия владельца — нет. Частота ограничена
+    (`phone_reveal`), чтобы номера нельзя было собирать скриптом.
+    """
+    permission_classes = [permissions.IsAuthenticated]
+    throttle_scope = 'phone_reveal'
+
+    @extend_schema(request=None, responses=PhoneRevealResponseSerializer)
+    def post(self, request, pk):
+        from datetime import timedelta
+
+        from django.utils import timezone
+
+        from .models import PhoneReveal
+
+        item = Item.objects.select_related('owner__profile').filter(pk=pk, status=Item.STATUS_APPROVED).first()
+        if item is None:
+            raise NotFound('Объявление не найдено.')
+        is_owner = item.owner_id == request.user.pk
+        already = PhoneReveal.objects.filter(
+            item=item, user=request.user, counted=True,
+            created_at__gte=timezone.now() - timedelta(hours=24),
+        ).exists()
+        PhoneReveal.objects.create(item=item, user=request.user, counted=not (is_owner or already))
+        profile = getattr(item.owner, 'profile', None)
+        return Response({
+            'listing_id': item.pk,
+            'owner_id': item.owner_id,
+            'phone': item.owner.phone,
+            'name': (profile.shop_name or profile.full_name) if profile else '',
+        })

@@ -175,6 +175,8 @@ REST_FRAMEWORK = {
         'payments': '20/min',
         'kyc': '10/min',
         'analytics': '120/min',
+        # «Показать номер»: живому человеку хватает с запасом, сбор номеров скриптом упирается.
+        'phone_reveal': config('THROTTLE_RATE_PHONE_REVEAL', default='60/hour'),
     },
     # Exactly one reverse proxy (nginx) sits in front of Django here. Without
     # this, SimpleRateThrottle.get_ident() falls back to hashing the raw
