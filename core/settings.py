@@ -176,8 +176,10 @@ REST_FRAMEWORK = {
         'payments': '20/min',
         'kyc': '10/min',
         'analytics': '120/min',
-        # «Показать номер»: живому человеку хватает с запасом, сбор номеров скриптом упирается.
-        'phone_reveal': config('THROTTLE_RATE_PHONE_REVEAL', default='60/hour'),
+        # «Показать номер» (решение 16.11.2026): 30 в час и 100 в сутки на
+        # пользователя — живому человеку с запасом, сбор номеров скриптом упирается.
+        'phone_reveal_hour': config('THROTTLE_RATE_PHONE_REVEAL_HOUR', default='30/hour'),
+        'phone_reveal_day': config('THROTTLE_RATE_PHONE_REVEAL_DAY', default='100/day'),
         'report': '20/hour',
     },
     # Exactly one reverse proxy (nginx) sits in front of Django here. Without

@@ -40,15 +40,31 @@ class SubscriptionRulesTests(APITestCase):
         self.assertEqual(second.ends_at, end + timedelta(days=30))
         self.assertEqual(SubscriptionPeriod.objects.filter(user=self.user).count(), 2)
 
-    def test_upgrade_starts_now(self):
+    def test_upgrade_starts_now_with_leftover_converted(self):
         extend_subscription(self.user, self.start)
+        # Прошло 10 дней: осталось 20 дней START = 66 000 сум = 20 × 99 000 / 399 000 дней PRO.
+        Subscription.objects.filter(user=self.user).update(ends_at=timezone.now() + timedelta(days=20))
         before = timezone.now()
         sub = extend_subscription(self.user, self.pro)
         self.assertEqual(sub.plan, self.pro)
-        self.assertLess(sub.ends_at - before - timedelta(days=30), timedelta(seconds=5))
+        credit = timedelta(days=20) * 99000 / 399000
+        self.assertAlmostEqual(sub.ends_at, before + timedelta(days=30) + credit, delta=timedelta(seconds=5))
+        period = SubscriptionPeriod.objects.get(user=self.user, plan=self.pro)
+        self.assertIn('+5.0 дн. за остаток START', period.comment)
         # Период START в истории обрезан моментом перехода.
         start_period = SubscriptionPeriod.objects.get(user=self.user, plan=self.start)
         self.assertLessEqual(start_period.ends_at, timezone.now())
+
+    def test_renewing_the_same_plan_has_no_credit(self):
+        first = extend_subscription(self.user, self.pro).ends_at
+        self.assertEqual(extend_subscription(self.user, self.pro).ends_at, first + timedelta(days=30))
+
+    def test_upgrade_after_expiry_has_no_credit(self):
+        extend_subscription(self.user, self.start)
+        Subscription.objects.filter(user=self.user).update(ends_at=timezone.now() - timedelta(days=1))
+        before = timezone.now()
+        sub = extend_subscription(self.user, self.pro)
+        self.assertAlmostEqual(sub.ends_at, before + timedelta(days=30), delta=timedelta(seconds=5))
 
     def test_downgrade_refused_while_active(self):
         extend_subscription(self.user, self.pro)

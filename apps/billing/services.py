@@ -4,7 +4,9 @@
 
 Правила (решение 16.11.2026, оплата — разовым платежом за месяц, продление вручную):
 - тот же тариф, пока он действует — новый период начинается с конца текущего;
-- тариф выше — начинается сразу, остаток прежнего не переносится;
+- тариф выше — начинается сразу; неиспользованные дни прежнего пересчитываются
+  в дни нового по цене (остаток суммы / цена нового × период) и добавляются
+  к сроку (решение 16.11.2026);
 - тариф ниже, пока текущий действует, — отказ (дождаться окончания); сотрудник
   может выдать его сразу (`replace_active=True`);
 - тариф закончился — новый начинается с момента оплаты.
@@ -66,6 +68,14 @@ def extend_subscription(user, plan: Plan, *, days=None, source=SubscriptionPerio
             SubscriptionPeriod.objects.filter(user=user, ends_at__gt=now).update(ends_at=now)
     ends_at = starts_at + timedelta(days=days)
 
+    credit = timedelta(0)
+    if active and plan.rank > subscription.plan.rank:
+        credit = upgrade_credit(subscription.plan, plan, subscription.ends_at - now)
+        ends_at += credit
+        if credit:
+            note = f'+{credit.total_seconds() / 86400:.1f} дн. за остаток {subscription.plan.name}'
+            comment = f'{comment}; {note}' if comment else note
+
     if subscription is None:
         subscription = Subscription.objects.create(user=user, plan=plan, ends_at=ends_at)
     else:
@@ -78,6 +88,18 @@ def extend_subscription(user, plan: Plan, *, days=None, source=SubscriptionPerio
         amount=amount, created_by=created_by, comment=comment,
     )
     return subscription
+
+
+def upgrade_credit(old_plan, new_plan, remaining):
+    """
+    Сколько времени нового тарифа стоит неиспользованный остаток старого:
+    остаток суммы = цена старого × остаток / период; в днях нового — остаток
+    суммы / цена нового × период. Период сокращается: остаток × цена старого / цена нового.
+    """
+    if remaining <= timedelta(0) or not old_plan.price or not new_plan.price:
+        return timedelta(0)
+    seconds = remaining.total_seconds() * float(old_plan.price) / float(new_plan.price)
+    return timedelta(seconds=int(seconds))
 
 
 # ─── Объявления сверх лимита при смене тарифа ────────────────────────────────

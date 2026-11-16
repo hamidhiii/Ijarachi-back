@@ -1,5 +1,6 @@
 """«Показать номер»: только авторизованным, каждое нажатие в журнале, дубли за 24 ч не считаются."""
 from datetime import timedelta
+from unittest import mock
 
 from django.core.cache import cache
 from django.urls import reverse
@@ -59,3 +60,33 @@ class PhoneRevealTests(APITestCase):
         Item.objects.filter(pk=self.item.pk).update(status=Item.STATUS_PENDING)
         self.client.force_authenticate(self.renter)
         self.assertEqual(self.client.post(self.url).status_code, 404)
+
+
+class PhoneRevealThrottleTests(APITestCase):
+    def setUp(self):
+        cache.clear()
+        self.items = [make_item(make_user()) for _ in range(2)]
+        self.user = make_user()
+        self.client.force_authenticate(self.user)
+
+    def press(self, n):
+        return [self.client.post(reverse('listing-phone', kwargs={'pk': self.items[i % 2].pk})).status_code for i in range(n)]
+
+    def test_thirty_an_hour(self):
+        codes = self.press(31)
+        self.assertEqual(codes[:30], [200] * 30)
+        self.assertEqual(codes[30], 429)
+        response = self.client.post(reverse('listing-phone', kwargs={'pk': self.items[0].pk}))
+        self.assertEqual(response.json()['code'], 'throttled')
+        self.assertIn('Retry-After', response)
+        # Другой пользователь не упирается в чужой лимит.
+        self.client.force_authenticate(make_user())
+        self.assertEqual(self.press(1), [200])
+
+    def test_hundred_a_day(self):
+        from apps.catalog.views import PhoneRevealHourThrottle
+
+        with mock.patch.object(PhoneRevealHourThrottle, 'allow_request', return_value=True):
+            codes = self.press(101)
+        self.assertEqual(codes[:100], [200] * 100)
+        self.assertEqual(codes[100], 429)

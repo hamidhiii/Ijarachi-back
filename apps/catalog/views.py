@@ -4,6 +4,7 @@ from drf_spectacular.utils import extend_schema
 
 from rest_framework import generics, status, permissions
 from rest_framework.response import Response
+from rest_framework.throttling import UserRateThrottle
 from rest_framework.views import APIView
 from rest_framework.parsers import MultiPartParser, FormParser
 from django.db import connection
@@ -630,17 +631,26 @@ class OfferRespondView(DealFlowRequiredMixin, APIView):
         return Response(OfferSerializer(offer, context={'request': request}).data)
 
 
+class PhoneRevealHourThrottle(UserRateThrottle):
+    scope = 'phone_reveal_hour'
+
+
+class PhoneRevealDayThrottle(UserRateThrottle):
+    scope = 'phone_reveal_day'
+
+
 class ListingPhoneView(APIView):
     """
     POST /api/v1/listings/{id}/phone/ — «Показать номер» владельца.
 
     Только для авторизованных. Каждое нажатие записывается (PhoneReveal:
     объявление, пользователь, время); в статистику объявления идёт одно нажатие
-    пользователя за 24 часа, нажатия владельца — нет. Частота ограничена
-    (`phone_reveal`), чтобы номера нельзя было собирать скриптом.
+    пользователя за 24 часа, нажатия владельца — нет. Частота ограничена —
+    30 в час и 100 в сутки на пользователя (429), чтобы номера нельзя было
+    собирать скриптом.
     """
     permission_classes = [permissions.IsAuthenticated]
-    throttle_scope = 'phone_reveal'
+    throttle_classes = [UserRateThrottle, PhoneRevealHourThrottle, PhoneRevealDayThrottle]
 
     @extend_schema(request=None, responses=PhoneRevealResponseSerializer)
     def post(self, request, pk):
