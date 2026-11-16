@@ -75,9 +75,9 @@ class ProfileSerializer(serializers.ModelSerializer):
     role = serializers.SerializerMethodField()
     telegram_connected = serializers.SerializerMethodField()
     telegram_deep_link = serializers.SerializerMethodField()
-    # Сколько объявлений может быть в работе (на модерации + опубликовано) и
-    # сколько уже есть — по типу аккаунта, см. apps.catalog.limits.
-    listing_limit = serializers.IntegerField(read_only=True)
+    # Сколько объявлений может быть активно (на модерации + опубликовано) по
+    # тарифу и сколько уже есть, см. apps.catalog.limits. null — без лимита.
+    listing_limit = serializers.IntegerField(read_only=True, allow_null=True)
     live_listings = serializers.SerializerMethodField()
 
     class Meta:

@@ -113,7 +113,7 @@ class ItemListSerializer(serializers.ModelSerializer):
             'id', 'title', 'description', 'category',
             'price_per_day', 'deposit', 'condition',
             'address', 'city', 'district', 'latitude', 'longitude', 'min_rental_days',
-            'is_negotiable',
+            'is_negotiable', 'quantity',
             'status', 'images', 'attributes', 'owner', 'rating', 'reviews_count',
             'view_count', 'favorite_count', 'is_favorite', 'created_at',
         ]
@@ -157,7 +157,7 @@ class ItemDetailSerializer(serializers.ModelSerializer):
             'id', 'title', 'description', 'price_per_day', 'deposit',
             'condition', 'status', 'city', 'district', 'address', 'latitude', 'longitude',
             'category', 'images', 'attributes', 'blocked_dates', 'owner', 'created_at',
-            'view_count', 'favorite_count', 'min_rental_days', 'is_negotiable',
+            'view_count', 'favorite_count', 'min_rental_days', 'is_negotiable', 'quantity',
             'is_favorite', 'rating', 'reviews_count',
         ]
 
@@ -199,7 +199,7 @@ class ItemCreateSerializer(serializers.ModelSerializer):
             'title', 'description', 'category',
             'price_per_day', 'deposit', 'condition',
             'address', 'city', 'district', 'latitude', 'longitude', 'min_rental_days',
-            'is_negotiable', 'attributes',
+            'is_negotiable', 'quantity', 'attributes',
         ]
 
     def validate_price_per_day(self, value):
@@ -218,8 +218,7 @@ class ItemCreateSerializer(serializers.ModelSerializer):
     def create(self, validated_data):
         user = self.context['request'].user
         with transaction.atomic():
-            # Частник — до LISTING_LIMIT_PRIVATE объявлений в работе, магазин — до
-            # LISTING_LIMIT_SHOP; проверка под блокировкой пользователя.
+            # Лимит объявлений в работе — по тарифу; проверка под блокировкой пользователя.
             enforce_listing_limit(user)
             item = Item.objects.create(owner=user, status=Item.STATUS_PENDING, **validated_data)
             # Create empty availability record
@@ -236,7 +235,7 @@ class ItemUpdateSerializer(serializers.ModelSerializer):
             'title', 'description', 'category',
             'price_per_day', 'deposit', 'condition',
             'address', 'city', 'district', 'latitude', 'longitude', 'min_rental_days', 'status',
-            'is_negotiable', 'attributes',
+            'is_negotiable', 'quantity', 'attributes',
         ]
 
     # Поля, которые видит покупатель и которые прошли модерацию. Правка любого из

@@ -89,6 +89,7 @@ INSTALLED_APPS = [
     'apps.chat',
     'apps.notifications',
     'apps.monitoring',
+    'apps.billing',
 ]
 
 MIDDLEWARE = [
@@ -419,12 +420,10 @@ DEAL_FLOW_ENABLED = config('DEAL_FLOW_ENABLED', default=False, cast=bool)
 # платит цену владельца без надбавки (решение 27.10.2026 — 15 %).
 PLATFORM_COMMISSION_PERCENT = config('PLATFORM_COMMISSION_PERCENT', default=15, cast=int)
 
-# Тип аккаунта (решение 27.10.2026): частное лицо или магазин. Лимит — сколько
-# объявлений одновременно может быть «в работе» (на модерации + опубликовано).
-# Снятые и отклонённые не считаются. Проверяется на сервере при создании и при
-# повторной отправке на модерацию; уже существующие объявления не снимаются.
-LISTING_LIMIT_PRIVATE = config('LISTING_LIMIT_PRIVATE', default=10, cast=int)
-LISTING_LIMIT_SHOP = config('LISTING_LIMIT_SHOP', default=200, cast=int)
+# Лимит объявлений в работе (на модерации + опубликовано) задаёт тариф
+# (apps.billing): FREE 10, START 100, BUSINESS 300, PRO без лимита.
+# Сколько дней даёт одна оплата тарифа («месяц»).
+BILLING_PERIOD_DAYS = config('BILLING_PERIOD_DAYS', default=30, cast=int)
 
 # OTP settings
 OTP_EXPIRY_SECONDS = config('OTP_EXPIRY_SECONDS', default=120, cast=int)

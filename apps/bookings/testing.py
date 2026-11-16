@@ -16,8 +16,9 @@ def make_user(**extra):
     return get_user_model().objects.create_user(phone=f'+99890{next(_phones):07d}', **extra)
 
 
-def make_item(owner, price=Decimal('100000'), deposit=Decimal('50000')):
+def make_item(owner, price=Decimal('100000'), deposit=Decimal('50000'), **fields):
     category, _ = Category.objects.get_or_create(slug='test-block1', defaults={'name': 'Test'})
+    fields.setdefault('status', Item.STATUS_APPROVED)
     return Item.objects.create(
         owner=owner,
         category=category,
@@ -26,9 +27,9 @@ def make_item(owner, price=Decimal('100000'), deposit=Decimal('50000')):
         price_per_day=price,
         deposit=deposit,
         condition=Item.CONDITION_GOOD,
-        status=Item.STATUS_APPROVED,
         address='Ташкент',
         city='Ташкент',
+        **fields,
     )
 
 

@@ -53,9 +53,10 @@ class Profile(models.Model):
     ]
 
     # Тип аккаунта (решение 27.10.2026). Частное лицо сдаёт свои вещи, магазин
-    # (прокат, салон) переключается сам в настройках и получает больше: выше
-    # лимит объявлений, бейдж «Магазин», часы работы на витрине и сводную
-    # статистику. Один аккаунт по-прежнему может и сдавать, и арендовать.
+    # (прокат, салон) переключается сам в настройках и получает бейдж «Магазин»
+    # и часы работы на витрине. Лимит объявлений и остальные возможности с
+    # 16.11.2026 задаёт тариф (apps.billing), а не тип аккаунта. Один аккаунт
+    # по-прежнему может и сдавать, и арендовать.
     ACCOUNT_PRIVATE = 'private'
     ACCOUNT_SHOP = 'shop'
     ACCOUNT_TYPE_CHOICES = [
@@ -105,8 +106,9 @@ class Profile(models.Model):
 
     @property
     def listing_limit(self):
-        from django.conf import settings
-        return settings.LISTING_LIMIT_SHOP if self.is_shop else settings.LISTING_LIMIT_PRIVATE
+        """Лимит активных объявлений по тарифу; None — без лимита (PRO)."""
+        from apps.catalog.limits import listing_limit
+        return listing_limit(self.user)
 
     def mark_kyc_verified(self):
         self.is_verified_kyc = True

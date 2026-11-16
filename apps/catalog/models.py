@@ -1,5 +1,6 @@
-from django.db import models
 from django.conf import settings
+from django.core.validators import MinValueValidator
+from django.db import models
 from django.utils.text import slugify
 from mptt.models import MPTTModel, TreeForeignKey
 
@@ -90,6 +91,10 @@ class Item(models.Model):
     view_count = models.PositiveIntegerField(default=0)
     favorite_count = models.PositiveIntegerField(default=0)
     min_rental_days = models.PositiveIntegerField(default=1)
+    # Объявление описывает модель вещи, а не один экземпляр: у проката может
+    # быть 40 одинаковых стульев. Свободный остаток на дату — quantity минус
+    # забронированное (apps.crm).
+    quantity = models.PositiveIntegerField('Количество', default=1, validators=[MinValueValidator(1)])
     # «Торг»: владелец готов обсуждать цену. Показывается рядом с ценой в
     # каталоге и на карточке — это заявление о числе, а не статус модерации.
     # Умолчание False: объявление, размещённое до появления поля, не должно
