@@ -12,7 +12,8 @@
 from datetime import timedelta
 
 from django.contrib.auth import get_user_model
-from django.db.models import Count, Min, Q, Sum
+from django.db.models import Count, DecimalField, Min, Q, Sum, Value
+from django.db.models.functions import Coalesce
 from django.utils import timezone
 from drf_spectacular.utils import OpenApiParameter, extend_schema
 from rest_framework import generics, permissions, serializers, status
@@ -87,10 +88,13 @@ class AdminSubscriptionListView(generics.ListAPIView):
     def get_queryset(self):
         now = timezone.now()
         qs = Subscription.objects.select_related('user', 'plan').annotate(
-            paid_total=Sum('user__billing_orders__amount', filter=Q(
-                user__billing_orders__status=BillingOrder.STATUS_PAID,
-                user__billing_orders__kind=BillingOrder.KIND_PLAN,
-            ) & ~Q(user__billing_orders__provider=BillingOrder.PROVIDER_STUB)),
+            paid_total=Coalesce(
+                Sum('user__billing_orders__amount', filter=Q(
+                    user__billing_orders__status=BillingOrder.STATUS_PAID,
+                    user__billing_orders__kind=BillingOrder.KIND_PLAN,
+                ) & ~Q(user__billing_orders__provider=BillingOrder.PROVIDER_STUB)),
+                Value(0), output_field=DecimalField(max_digits=14, decimal_places=0),
+            ),
         ).order_by('ends_at')
         params = self.request.query_params
         if params.get('plan'):
