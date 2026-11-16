@@ -83,3 +83,12 @@ class MyIDStubTests(APITestCase):
     def test_stub_is_404_in_prod_even_if_mode_is_stub(self):
         self.assertEqual(self.client.post(self.url).status_code, 404)
         self.assertFalse(Profile.objects.filter(user=self.user, is_verified_kyc=True).exists())
+
+
+class ProfileSignalTests(APITestCase):
+    def test_profile_is_created_with_user_even_after_gc(self):
+        import gc
+
+        gc.collect()  # слабая ссылка на обработчик исчезала бы именно здесь
+        user = make_user()
+        self.assertTrue(Profile.objects.filter(user=user).exists())

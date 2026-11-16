@@ -147,7 +147,8 @@ class VerifyOTPView(APIView):
 
         user, is_new = CustomUser.objects.get_or_create(phone=phone)
         if is_new:
-            Profile.objects.create(user=user)
+            # Профиль обычно уже создал сигнал post_save — get_or_create, а не create.
+            Profile.objects.get_or_create(user=user)
             logger.info('New user registered: %s', phone)
 
         events.record(request, AuthEvent.REGISTER_OK if is_new else AuthEvent.LOGIN_OK, phone=phone)
