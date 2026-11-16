@@ -13,7 +13,7 @@ from rest_framework.filters import SearchFilter, OrderingFilter
 
 from rest_framework.exceptions import NotFound, ValidationError
 
-from .models import Category, Favorite, Item, ItemImage, ItemAvailability, Offer
+from .models import Category, Favorite, Item, ItemImage, ItemAvailability, ListingDailyStat, Offer
 from .serializers import (
     CategorySerializer,
     ItemListSerializer,
@@ -140,6 +140,7 @@ class ListingDetailUpdateDestroyView(generics.RetrieveUpdateDestroyAPIView):
     def retrieve(self, request, *args, **kwargs):
         instance = self.get_object()
         Item.objects.filter(pk=instance.pk).update(view_count=F('view_count') + 1)
+        ListingDailyStat.bump_views(instance.pk)
         instance.view_count += 1
         serializer = self.get_serializer(instance)
         return Response(serializer.data)
@@ -223,9 +224,10 @@ class ListingStatsView(APIView):
 class MyListingsStatsView(APIView):
     """
     GET /api/v1/listings/my/stats/
-    Сводная статистика по всем объявлениям — возможность магазина (решение
-    27.10.2026). Частнику 403 `shop_only`: статистика по одному объявлению
-    (/listings/{id}/stats/) остаётся доступной всем.
+    Сводная статистика по всем объявлениям — право тарифа BUSINESS и выше
+    (до 16.11.2026 — магазина). Без него 403 `PLAN_FEATURE_REQUIRED`;
+    статистика по одному объявлению (/listings/{id}/stats/) доступна всем.
+    Помесячная статистика с показами номера и сообщениями — /owner/stats/.
 
     requests — заявки на аренду (все, кроме черновиков, отменённые тоже);
     deals — оплаченные сделки. Снятые объявления не показываются.
@@ -233,15 +235,10 @@ class MyListingsStatsView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def get(self, request):
+        from apps.billing.plans import require_feature
         from apps.bookings.models import Booking
-        from apps.users.models import Profile
 
-        profile, _ = Profile.objects.get_or_create(user=request.user)
-        if not profile.is_shop:
-            return Response(
-                {'code': 'shop_only', 'detail': 'Сводная статистика доступна магазинам.'},
-                status=status.HTTP_403_FORBIDDEN,
-            )
+        require_feature(request.user, 'statistics')
 
         paid = [
             Booking.STATUS_PAID, Booking.STATUS_IN_PROGRESS, Booking.STATUS_RETURNED,

@@ -7,6 +7,7 @@ from rest_framework.test import APITestCase
 from apps.bookings.models import Booking
 from apps.bookings.testing import make_booking, make_item, make_user
 from apps.catalog.models import Category, Item
+from apps.billing.testing import give_plan
 from apps.users.models import Profile
 
 
@@ -103,17 +104,19 @@ class ShopStatsTests(APITestCase):
         self.client.force_authenticate(self.user)
         self.url = reverse('my-listings-stats')
 
-    def test_private_gets_403(self):
+    def test_free_plan_gets_403(self):
+        # Шоп без тарифа тоже: с 16.11.2026 статистику даёт тариф BUSINESS+.
+        set_profile(self.user, account_type='shop', shop_name='Прокат')
         response = self.client.get(self.url)
         self.assertEqual(response.status_code, 403)
-        self.assertEqual(response.json()['code'], 'shop_only')
+        self.assertEqual(response.json()['code'], 'PLAN_FEATURE_REQUIRED')
 
     def test_anonymous_gets_401(self):
         self.client.force_authenticate(None)
         self.assertEqual(self.client.get(self.url).status_code, 401)
 
-    def test_shop_sees_own_listings_only(self):
-        set_profile(self.user, account_type='shop', shop_name='Прокат')
+    def test_business_plan_sees_own_listings_only(self):
+        give_plan(self.user, 'business')
         item = make_item(self.user)
         Item.objects.filter(pk=item.pk).update(view_count=7, favorite_count=2)
         hidden = make_item(self.user)

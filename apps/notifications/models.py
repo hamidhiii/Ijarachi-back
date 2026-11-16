@@ -9,6 +9,7 @@ class Notification(models.Model):
     TYPE_SYSTEM = 'system'
     TYPE_OFFER = 'offer'
     TYPE_BILLING = 'billing'
+    TYPE_CRM = 'crm'
 
     TYPE_CHOICES = [
         (TYPE_DEAL, 'Deal'),
@@ -17,6 +18,7 @@ class Notification(models.Model):
         (TYPE_SYSTEM, 'System'),
         (TYPE_OFFER, 'Offer'),
         (TYPE_BILLING, 'Billing'),
+        (TYPE_CRM, 'CRM'),
     ]
 
     user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='notifications')

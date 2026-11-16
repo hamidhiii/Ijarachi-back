@@ -67,6 +67,8 @@ Docker: `cp .env.example .env && docker compose up -d --build` (миграции
 | [apps/payments](apps/payments) | платежи, провайдеры оплаты, вебхуки Click/Payme, кошелёк |
 | [apps/chat](apps/chat) | диалоги и сообщения (REST + WebSocket) |
 | [apps/notifications](apps/notifications) | уведомления: WebSocket, Telegram, Web Push |
+| [apps/billing](apps/billing) | тарифы, подписки, заказы Click/Payme, продвижение |
+| [apps/crm](apps/crm) | кабинет владельца: брони, клиенты, остатки, сотрудники, точки, статистика, выгрузка |
 | [apps/monitoring](apps/monitoring) | `/monitor/` — панель сотрудников (сделки, споры, платежи, ошибки) |
 
 ## 3. Сделка: статусы и даты
@@ -288,6 +290,44 @@ OrderingFilter) работает как раньше.
 
 **Количество:** `Item.quantity` (≥ 1) — объявление описывает модель вещи, у
 проката их может быть 40 одинаковых; меняется без повторной модерации.
+
+## 6d. Кабинет владельца (CRM)
+
+API для owner.rentoo.uz — `/api/v1/owner/...`, приложение [apps/crm](apps/crm).
+
+**Чей кабинет** ([apps/crm/access.py](apps/crm/access.py)): по умолчанию свой.
+Сотрудник открывает кабинет владельца заголовком `X-Owner-Account: <id>` (или
+`?account=`): он должен быть в `StaffMember` владельца, а тариф владельца —
+BUSINESS+ (иначе 403 `STAFF_ACCESS_SUSPENDED`; чужой — `NOT_STAFF`). Роли:
+владелец — всё; `manager` — всё, кроме сотрудников (`OWNER_ONLY`); `viewer` —
+только чтение (`READ_ONLY_ROLE`). Права тарифа проверяются по владельцу
+аккаунта. `GET /owner/accounts/` — доступные мне кабинеты.
+
+| Эндпоинт | Что |
+|---|---|
+| `owner/reservations/[{id}/]` | ручные брони: объявление, количество, даты, источник (`rentoo`/`instagram`/`phone`/`other`), клиент, сумма, заметки; статусы `booked → issued → returned`, `cancelled` (DELETE — отмена) |
+| `owner/clients/[{id}/]` | база клиентов (поиск `?q=`), карточка с историей аренд и заметками; номер, совпавший с пользователем Rentoo, связывается с ним |
+| `owner/listings/[{id}/]` | объявления с `free_today`; PATCH `branch` (PRO) |
+| `owner/listings/{id}/calendar/?from=&to=` | по дням: занято / свободно / закрыто вручную, брони периода (до 92 дней) |
+| `owner/stock/?date=` или `?from=&to=` `[&branch=]` | остатки: свободно = количество − забронировано (на период — по самому загруженному дню) |
+| `owner/staff/[{id}/]` | сотрудники (только владелец; добавление — BUSINESS+, по номеру пользователя Rentoo) |
+| `owner/branches/[{id}/]` | точки проката (PRO) |
+| `owner/stats/?month=YYYY-MM` | по объявлению за месяц: просмотры, показы номера, сообщения от арендаторов; итоги и 6 месяцев (BUSINESS+) |
+| `owner/export/{listings,reservations,clients}/?type=csv\|xlsx` | выгрузка (PRO); параметр `type`, не `format` — тот занят DRF |
+
+**Остатки и даты** ([apps/bookings/availability.py](apps/bookings/availability.py)):
+день занимают и сделки (одна единица), и брони кабинета (их количество), пока
+бронь `booked`/`issued`. Новая или изменённая бронь проверяется под
+`lock_item` (как сделки в блоке 1): не хватает единиц на какой-то день — 409
+`NOT_ENOUGH_STOCK` с `free`. Публичный календарь объявления закрывает только
+дни, где свободных единиц не осталось. Просмотры по дням — `ListingDailyStat`.
+
+**Напоминания** — `remind_reservations` (Beat, 08:00): выдача и возврат
+сегодня → владельцу и менеджерам уведомление `crm` (WebSocket, Telegram, Web
+Push). Отметка «за какой день напомнили» — без дублей. SMS клиентам не шлём.
+
+`GET /listings/my/stats/` теперь требует тариф со статистикой (было: магазин) —
+403 `PLAN_FEATURE_REQUIRED`.
 
 ## 7. Проверка личности (KYC, MyID)
 

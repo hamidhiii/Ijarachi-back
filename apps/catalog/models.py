@@ -100,6 +100,11 @@ class Item(models.Model):
     plan_paused_status = models.CharField('Снято по тарифу (вернуть в статус)', max_length=20, blank=True)
     # Платное продвижение (apps.billing): действует, пока дата в будущем.
     # Порядок выдачи — apps.catalog.ranking.
+    # Точка проката (тариф PRO, apps.crm.Branch); пусто — без привязки.
+    branch = models.ForeignKey(
+        'crm.Branch', on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='items', verbose_name='Точка',
+    )
     top_until = models.DateTimeField('В топе до', null=True, blank=True, db_index=True)
     vip_until = models.DateTimeField('VIP до', null=True, blank=True, db_index=True)
     # «Торг»: владелец готов обсуждать цену. Показывается рядом с ценой в
@@ -275,3 +280,34 @@ class PhoneReveal(models.Model):
 
     def __str__(self):
         return f'{self.user_id} → {self.item_id} {self.created_at:%d.%m.%Y %H:%M}'
+
+
+class ListingDailyStat(models.Model):
+    """Просмотры карточки по дням — для статистики владельца за месяц."""
+    item = models.ForeignKey(Item, on_delete=models.CASCADE, related_name='daily_stats', verbose_name='Объявление')
+    date = models.DateField('День')
+    views = models.PositiveIntegerField('Просмотры', default=0)
+
+    class Meta:
+        verbose_name = 'Статистика объявления за день'
+        verbose_name_plural = 'Статистика объявлений по дням'
+        constraints = [models.UniqueConstraint(fields=['item', 'date'], name='listing_daily_stat_once')]
+
+    def __str__(self):
+        return f'{self.item_id} {self.date}: {self.views}'
+
+    @classmethod
+    def bump_views(cls, item_id):
+        from django.db import IntegrityError, transaction
+        from django.db.models import F
+        from django.utils import timezone
+
+        today = timezone.localdate()
+        if cls.objects.filter(item_id=item_id, date=today).update(views=F('views') + 1):
+            return
+        try:
+            with transaction.atomic():
+                cls.objects.create(item_id=item_id, date=today, views=1)
+        except IntegrityError:
+            # Параллельный просмотр создал строку первым.
+            cls.objects.filter(item_id=item_id, date=today).update(views=F('views') + 1)

@@ -15,7 +15,13 @@
 Гонку двух одновременных броней на одни даты разводит lock_item: проверка
 пересечения и перевод брони в занимающий статус идут в одной транзакции под
 select_for_update по строке объявления.
+
+С 16.11.2026 объявление описывает модель вещи с количеством (Item.quantity), и
+дни занимают не только сделки, но и брони владельца из CRM (apps.crm.Reservation,
+со своим количеством). День занят полностью, когда занятых единиц не меньше
+quantity; сделка занимает одну единицу. При quantity=1 всё как прежде.
 """
+from collections import defaultdict
 from datetime import timedelta
 
 from django.utils import timezone
@@ -58,14 +64,6 @@ def manual_blocked_dates(item) -> list[str]:
         return []
 
 
-def is_range_free(item, start, end, exclude_booking=None) -> bool:
-    if overlapping_bookings(item, start, end, exclude_booking).exists():
-        return False
-    # Даты в ISO сравниваются как строки — без перебора дней диапазона.
-    lo, hi = start.isoformat(), end.isoformat()
-    return not any(lo <= day <= hi for day in manual_blocked_dates(item))
-
-
 def _days(start, end):
     current = start
     while current <= end:
@@ -73,18 +71,56 @@ def _days(start, end):
         current += timedelta(days=1)
 
 
+def units_by_day(item, start, end, exclude_booking=None, exclude_reservation=None) -> dict:
+    """Сколько единиц объявления занято в каждый день диапазона (только занятые дни)."""
+    from apps.crm.models import Reservation
+
+    counts = defaultdict(int)
+    for b_start, b_end in overlapping_bookings(item, start, end, exclude_booking).values_list('start_date', 'end_date'):
+        for day in _days(max(b_start, start), min(b_end, end)):
+            counts[day] += 1
+    reservations = Reservation.objects.filter(
+        item=item, status__in=Reservation.OCCUPYING_STATUSES, start_date__lte=end, end_date__gte=start,
+    )
+    if exclude_reservation is not None:
+        reservations = reservations.exclude(pk=exclude_reservation.pk)
+    for r_start, r_end, quantity in reservations.values_list('start_date', 'end_date', 'quantity'):
+        for day in _days(max(r_start, start), min(r_end, end)):
+            counts[day] += quantity
+    return counts
+
+
+def manually_blocked_in(item, start, end) -> bool:
+    # Даты в ISO сравниваются как строки — без перебора дней диапазона.
+    lo, hi = start.isoformat(), end.isoformat()
+    return any(lo <= day <= hi for day in manual_blocked_dates(item))
+
+
+def is_range_free(item, start, end, exclude_booking=None, units=1, exclude_reservation=None) -> bool:
+    """Свободно ли `units` единиц на каждый день диапазона (вызывать под lock_item)."""
+    if manually_blocked_in(item, start, end):
+        return False
+    counts = units_by_day(item, start, end, exclude_booking, exclude_reservation)
+    return all(counts.get(day, 0) + units <= item.quantity for day in _days(start, end))
+
+
 def booked_dates(item) -> list[str]:
-    """Дни, занятые бронями, начиная с сегодняшнего (прошлое клиенту не нужно)."""
+    """Дни, занятые полностью (свободных единиц нет), начиная с сегодняшнего."""
+    from apps.crm.models import Reservation
+
     today = timezone.localdate()
-    days = set()
-    ranges = Booking.objects.filter(
-        item=item, status__in=OCCUPYING_STATUSES, end_date__gte=today,
-    ).values_list('start_date', 'end_date')
-    for start, end in ranges:
-        days.update(day.isoformat() for day in _days(max(start, today), end))
-    return sorted(days)
+    last = Booking.objects.filter(item=item, status__in=OCCUPYING_STATUSES, end_date__gte=today).order_by('-end_date')
+    last_reservation = Reservation.objects.filter(
+        item=item, status__in=Reservation.OCCUPYING_STATUSES, end_date__gte=today,
+    ).order_by('-end_date')
+    ends = [qs.values_list('end_date', flat=True).first() for qs in (last, last_reservation)]
+    ends = [end for end in ends if end]
+    if not ends:
+        return []
+    counts = units_by_day(item, today, max(ends))
+    return sorted(day.isoformat() for day, used in counts.items() if used >= item.quantity)
 
 
 def blocked_dates(item) -> list[str]:
-    """Всё, что нельзя забронировать: ручные блокировки владельца плюс брони."""
+    """Всё, что нельзя забронировать: ручные блокировки владельца плюс занятые полностью дни."""
     return sorted(set(manual_blocked_dates(item)) | set(booked_dates(item)))

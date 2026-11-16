@@ -90,6 +90,7 @@ INSTALLED_APPS = [
     'apps.notifications',
     'apps.monitoring',
     'apps.billing',
+    'apps.crm',
 ]
 
 MIDDLEWARE = [
@@ -274,6 +275,11 @@ CELERY_BEAT_SCHEDULE = {
     'expire-subscriptions-hourly': {
         'task': 'apps.billing.tasks.expire_subscriptions',
         'schedule': crontab(minute=5),
+    },
+    # Кабинет владельца: напоминания о выдаче и возврате на сегодня.
+    'remind-reservations-daily': {
+        'task': 'apps.crm.tasks.remind_reservations',
+        'schedule': crontab(hour=8, minute=0),
     },
     'remind-subscriptions-daily': {
         'task': 'apps.billing.tasks.remind_subscriptions',
