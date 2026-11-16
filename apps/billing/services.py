@@ -82,6 +82,7 @@ def extend_subscription(user, plan: Plan, *, days=None, source=SubscriptionPerio
 
 # ─── Объявления сверх лимита при смене тарифа ────────────────────────────────
 
+@transaction.atomic
 def pause_listings_over_limit(user, plan):
     """
     Тариф закончился: активных объявлений больше лимита нового тарифа — лишние
@@ -108,6 +109,7 @@ def pause_listings_over_limit(user, plan):
     return len(extra)
 
 
+@transaction.atomic
 def restore_paused_listings(user):
     """
     Тариф снова оплачен: объявления, снятые по тарифу, возвращаются в прежний

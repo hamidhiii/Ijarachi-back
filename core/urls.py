@@ -29,6 +29,7 @@ urlpatterns = [
     path('api/v1/admin-api/dashboard/', AdminDashboardView.as_view(), name='admin-dashboard'),
     path('api/v1/admin-api/finance/export/', AdminFinanceExportView.as_view(), name='admin-finance-export'),
     path('api/v1/admin-api/users/<int:pk>/status/', AdminUserBlockView.as_view(), name='admin-user-status'),
+    path('api/v1/admin-api/billing/', include('apps.billing.admin_urls')),
 
     # Docs
     path('api/schema/', SpectacularAPIView.as_view(), name='schema'),

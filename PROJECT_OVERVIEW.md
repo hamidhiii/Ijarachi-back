@@ -279,6 +279,17 @@ Web Push: `endpoint` подписки — только HTTPS к push-серви�
 сортировка (`ordering=price`, `-price`, `date`, `relevance`, поля
 OrderingFilter) работает как раньше.
 
+**Админка тарифов** ([apps/billing/admin_api.py](apps/billing/admin_api.py), `is_staff`):
+- `GET /admin-api/billing/subscriptions/?plan=&state=active|expired&q=` — подписки
+  с суммой оплат (без заглушки);
+- `GET /admin-api/billing/orders/?status=&kind=&provider=&needs_attention=1&q=` — платежи;
+- `POST /admin-api/billing/subscriptions/extend/` `{"user" | "phone", "plan", "days", "comment"}` —
+  ручное продление (другой тариф — сразу, в истории — «вручную» и автор), снятые
+  по тарифу объявления возвращаются; то же действием в Django admin;
+- `GET /admin-api/billing/metrics/?days=30` — платящие по тарифам, MRR (сумма
+  месячных цен действующих платных тарифов), отток (платили в начале периода,
+  сейчас нет), выручка за период (без заглушки), новые платящие, истекают за 7 дней.
+
 **Права тарифа** — `apps.billing.plans.require_feature(user, 'statistics' | 'staff_access' | 'branches' | 'data_export')`:
 403 `{"code": "PLAN_FEATURE_REQUIRED", "feature", "required_plan", "current_plan"}`.
 

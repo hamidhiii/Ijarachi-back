@@ -1,4 +1,4 @@
-from django.contrib import admin
+from django.contrib import admin, messages
 
 from .models import BillingOrder, Plan, Promotion, Subscription, SubscriptionPeriod
 
@@ -32,8 +32,23 @@ class SubscriptionAdmin(admin.ModelAdmin):
     list_filter = ('plan',)
     search_fields = ('user__phone',)
     readonly_fields = ('user', 'plan', 'ends_at', 'created_at', 'updated_at')
-    # Менять тариф — только действием «продлить» (admin-api или ниже), чтобы
-    # каждое изменение попадало в историю периодов.
+    # Менять тариф — только действием «продлить» (здесь или admin-api
+    # /admin-api/billing/subscriptions/extend/), чтобы каждое изменение
+    # попадало в историю периодов.
+    actions = ['extend_one_period']
+
+    @admin.action(description='Продлить тот же тариф на период (вручную)')
+    def extend_one_period(self, request, queryset):
+        from .services import extend_subscription, restore_paused_listings
+        from .models import SubscriptionPeriod
+
+        for subscription in queryset.select_related('plan', 'user'):
+            extend_subscription(
+                subscription.user, subscription.plan, source=SubscriptionPeriod.SOURCE_MANUAL,
+                created_by=request.user, comment='Продлено в админке', replace_active=True,
+            )
+            restore_paused_listings(subscription.user)
+        self.message_user(request, f'Продлено подписок: {queryset.count()}', messages.SUCCESS)
 
     def has_add_permission(self, request):
         return False
