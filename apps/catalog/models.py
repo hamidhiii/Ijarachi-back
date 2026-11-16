@@ -46,6 +46,8 @@ class Item(models.Model):
     STATUS_PENDING = 'pending'
     STATUS_REJECTED = 'rejected'
     STATUS_INACTIVE = 'inactive'
+    # Скрыто модератором (жалоба, нарушение): владелец сам вернуть не может.
+    STATUS_BLOCKED = 'blocked'
     STATUS_ACTIVE = STATUS_APPROVED
     STATUS_MODERATION = STATUS_PENDING
 
@@ -54,6 +56,7 @@ class Item(models.Model):
         (STATUS_PENDING, 'На модерации'),
         (STATUS_REJECTED, 'Отклонено'),
         (STATUS_INACTIVE, 'Неактивно'),
+        (STATUS_BLOCKED, 'Скрыто модератором'),
     ]
 
     CONDITION_NEW = 'new'
@@ -311,3 +314,63 @@ class ListingDailyStat(models.Model):
         except IntegrityError:
             # Параллельный просмотр создал строку первым.
             cls.objects.filter(item_id=item_id, date=today).update(views=F('views') + 1)
+
+
+class Report(models.Model):
+    """Жалоба на объявление (решение 16.11.2026). Разбирает сотрудник в очереди модерации."""
+    REASON_FRAUD = 'fraud'
+    REASON_PROHIBITED = 'prohibited'
+    REASON_WRONG_INFO = 'wrong_info'
+    REASON_DUPLICATE = 'duplicate'
+    REASON_UNAVAILABLE = 'unavailable'
+    REASON_OFFENSIVE = 'offensive'
+    REASON_OTHER = 'other'
+    REASON_CHOICES = [
+        (REASON_FRAUD, 'Мошенничество'),
+        (REASON_PROHIBITED, 'Запрещённая вещь'),
+        (REASON_WRONG_INFO, 'Неверные цена, фото или описание'),
+        (REASON_DUPLICATE, 'Дубликат'),
+        (REASON_UNAVAILABLE, 'Вещь уже не сдаётся'),
+        (REASON_OFFENSIVE, 'Оскорбительное содержание'),
+        (REASON_OTHER, 'Другое'),
+    ]
+
+    STATUS_NEW = 'new'
+    STATUS_DISMISSED = 'dismissed'
+    STATUS_ACTION_TAKEN = 'action_taken'
+    STATUS_CHOICES = [
+        (STATUS_NEW, 'Новая'),
+        (STATUS_DISMISSED, 'Отклонена'),
+        (STATUS_ACTION_TAKEN, 'Объявление скрыто'),
+    ]
+
+    item = models.ForeignKey(Item, on_delete=models.CASCADE, related_name='reports', verbose_name='Объявление')
+    reporter = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True,
+        related_name='listing_reports', verbose_name='Кто пожаловался',
+    )
+    reason = models.CharField('Причина', max_length=20, choices=REASON_CHOICES)
+    comment = models.TextField('Комментарий', max_length=1000, blank=True)
+    status = models.CharField('Статус', max_length=20, choices=STATUS_CHOICES, default=STATUS_NEW)
+    resolved_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='+', verbose_name='Кто разобрал',
+    )
+    resolution = models.CharField('Решение (комментарий)', max_length=500, blank=True)
+    resolved_at = models.DateTimeField('Разобрана', null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        verbose_name = 'Жалоба'
+        verbose_name_plural = 'Жалобы'
+        ordering = ['created_at']
+        indexes = [models.Index(fields=['status', 'created_at'])]
+        constraints = [
+            # Одна открытая жалоба пользователя на объявление — без накрутки.
+            models.UniqueConstraint(
+                fields=['item', 'reporter'], condition=models.Q(status='new'), name='report_one_open_per_user',
+            ),
+        ]
+
+    def __str__(self):
+        return f'Жалоба #{self.pk} на {self.item_id}: {self.get_reason_display()}'

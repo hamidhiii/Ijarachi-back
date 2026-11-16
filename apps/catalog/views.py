@@ -146,6 +146,10 @@ class ListingDetailUpdateDestroyView(generics.RetrieveUpdateDestroyAPIView):
         return Response(serializer.data)
 
     def perform_destroy(self, instance):
+        # Мягкое удаление: снять с публикации. Скрытое модератором остаётся
+        # скрытым — иначе «удалить и вернуть» обходило бы блокировку.
+        if instance.status == Item.STATUS_BLOCKED:
+            return
         instance.status = Item.STATUS_INACTIVE
         instance.save(update_fields=['status'])
 
@@ -199,7 +203,10 @@ class ItemUpdateView(generics.RetrieveUpdateDestroyAPIView):
         return Item.objects.filter(owner=self.request.user)
 
     def perform_destroy(self, instance):
-        # Soft-delete: set inactive
+        # Мягкое удаление: снять с публикации. Скрытое модератором остаётся
+        # скрытым — иначе «удалить и вернуть» обходило бы блокировку.
+        if instance.status == Item.STATUS_BLOCKED:
+            return
         instance.status = Item.STATUS_INACTIVE
         instance.save(update_fields=['status'])
 

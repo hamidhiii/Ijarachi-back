@@ -82,6 +82,9 @@ class Profile(models.Model):
     rating_count = models.PositiveIntegerField('Кол-во оценок', default=0)
     wallet_balance = models.DecimalField('Баланс (сум)', max_digits=14, decimal_places=0, default=0)
     is_verified_kyc = models.BooleanField(default=False)
+    # Личность подтверждена через MyID (значок «Проверен MyID» на карточках).
+    # Ставит интеграция MyID; пока её нет — заглушка в dev/staging.
+    myid_verified_at = models.DateTimeField('Проверен MyID', null=True, blank=True)
     kyc_verified_at = models.DateTimeField(null=True, blank=True)
     # Дублировать уведомления в Telegram-бот (тот же, что доставляет OTP) —
     # включено по умолчанию, пользователь может выключить в настройках.
@@ -109,6 +112,14 @@ class Profile(models.Model):
         """Лимит активных объявлений по тарифу; None — без лимита (PRO)."""
         from apps.catalog.limits import listing_limit
         return listing_limit(self.user)
+
+    @property
+    def myid_verified(self):
+        return self.myid_verified_at is not None
+
+    def mark_myid_verified(self):
+        self.myid_verified_at = timezone.now()
+        self.save(update_fields=['myid_verified_at'])
 
     def mark_kyc_verified(self):
         self.is_verified_kyc = True

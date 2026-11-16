@@ -72,6 +72,7 @@ class ProfileSerializer(serializers.ModelSerializer):
     phone = serializers.CharField(source='user.phone', read_only=True)
     email = serializers.EmailField(source='user.email', required=False)
     verified = serializers.BooleanField(source='is_verified_kyc', read_only=True)
+    myid_verified = serializers.BooleanField(read_only=True)
     role = serializers.SerializerMethodField()
     telegram_connected = serializers.SerializerMethodField()
     telegram_deep_link = serializers.SerializerMethodField()
@@ -86,7 +87,7 @@ class ProfileSerializer(serializers.ModelSerializer):
             'id', 'phone', 'email', 'full_name', 'avatar',
             'account_type', 'shop_name', 'about', 'location', 'working_hours',
             'listing_limit', 'live_listings',
-            'rating', 'verified', 'role',
+            'rating', 'verified', 'myid_verified', 'role',
             'notify_telegram', 'telegram_connected', 'telegram_deep_link',
             # Доп. поля для обратной совместимости с мобильным клиентом.
             'rating_count', 'verification_status', 'wallet_balance',
@@ -152,6 +153,7 @@ class PublicUserSerializer(serializers.ModelSerializer):
     rating = serializers.SerializerMethodField()
     rating_count = serializers.SerializerMethodField()
     verified = serializers.SerializerMethodField()
+    myid_verified = serializers.SerializerMethodField()
     role = serializers.SerializerMethodField()
     is_verified_kyc = serializers.SerializerMethodField()
     verification_status = serializers.SerializerMethodField()
@@ -174,6 +176,7 @@ class PublicUserSerializer(serializers.ModelSerializer):
             'avatar',
             'rating',
             'verified',
+            'myid_verified',
             'role',
             # Доп. поля для обратной совместимости с мобильным клиентом.
             'rating_count',
@@ -248,6 +251,11 @@ class PublicUserSerializer(serializers.ModelSerializer):
             return False
 
     get_verified = get_is_verified_kyc
+
+    @extend_schema_field(serializers.BooleanField())
+    def get_myid_verified(self, obj):
+        profile = getattr(obj, 'profile', None)
+        return bool(profile and profile.myid_verified)
 
     @extend_schema_field(serializers.ChoiceField(choices=['admin', 'user']))
     def get_role(self, obj):

@@ -1,6 +1,6 @@
 from django.contrib import admin
 from mptt.admin import DraggableMPTTAdmin
-from .models import Category, Favorite, Item, ItemImage, ItemAvailability, Offer
+from .models import Category, Favorite, Item, ItemImage, ItemAvailability, Offer, PhoneReveal, Report
 
 
 @admin.register(Category)
@@ -77,3 +77,24 @@ class OfferAdmin(admin.ModelAdmin):
     list_filter = ['status', 'proposed_by']
     search_fields = ['item__title', 'renter__phone']
     raw_id_fields = ['item', 'renter']
+
+
+@admin.register(Report)
+class ReportAdmin(admin.ModelAdmin):
+    list_display = ('id', 'item', 'reason', 'status', 'reporter', 'created_at', 'resolved_by')
+    list_filter = ('status', 'reason')
+    search_fields = ('item__title', 'reporter__phone', 'comment')
+    readonly_fields = ('item', 'reporter', 'reason', 'comment', 'created_at')
+
+
+@admin.register(PhoneReveal)
+class PhoneRevealAdmin(admin.ModelAdmin):
+    list_display = ('item', 'user', 'counted', 'created_at')
+    list_filter = ('counted',)
+    search_fields = ('item__title', 'user__phone')
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_add_permission(self, request):
+        return False

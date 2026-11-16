@@ -22,3 +22,4 @@ class OwnerMiniSerializer(serializers.Serializer):
     avatar = serializers.URLField(allow_null=True, required=False)
     rating = serializers.FloatField()
     verified = serializers.BooleanField()
+    myid_verified = serializers.BooleanField(required=False, help_text='Значок «Проверен MyID»')

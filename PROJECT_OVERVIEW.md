@@ -329,6 +329,31 @@ Push). Отметка «за какой день напомнили» — без
 `GET /listings/my/stats/` теперь требует тариф со статистикой (было: магазин) —
 403 `PLAN_FEATURE_REQUIRED`.
 
+## 6e. Жалобы и модерация
+
+[apps/catalog/moderation.py](apps/catalog/moderation.py). Жалоба —
+`POST /api/v1/listings/{id}/report/` `{"reason", "comment"}` (причины:
+`fraud`, `prohibited`, `wrong_info`, `duplicate`, `unavailable`, `offensive`,
+`other`), одна открытая жалоба пользователя на объявление, на своё — 400
+`own_listing`, 20 в час. Статусы жалобы: `new`, `dismissed`, `action_taken`.
+
+Для сотрудников (`is_staff`):
+- `GET /admin-api/moderation/queue/` — объявления на модерации и с открытыми
+  жалобами (больше жалоб — выше);
+- `GET /admin-api/moderation/reports/?status=&listing=`;
+- `POST /admin-api/moderation/reports/{id}/resolve/` `{"action": "dismiss" | "hide", "comment"}`;
+- `POST|DELETE /admin-api/moderation/listings/{id}/hide/` — скрыть (`reason`) или вернуть;
+- одобрить/отклонить — как раньше, `POST /listings/{id}/moderate/`.
+
+Скрытое объявление — статус `blocked`: не в каталоге, не в лимите тарифа,
+владелец не может вернуть его ни сменой статуса, ни «удалить и вернуть».
+Скрытие закрывает все открытые жалобы на объявление; владелец получает
+уведомление с причиной.
+
+**Значок «Проверен MyID»** — `Profile.myid_verified_at`; в карточках
+`owner.myid_verified`, на публичной странице и в профиле — `myid_verified`.
+Ставит интеграция MyID; пока её нет — только заглушка (dev/staging).
+
 ## 7. Проверка личности (KYC, MyID)
 
 Собственный KYC (OCR паспорта + сверка лица) выключен `KYC_ENABLED=False`:

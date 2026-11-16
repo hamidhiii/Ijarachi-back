@@ -30,6 +30,7 @@ class MyIDStubVerifyView(APIView):
             raise Http404
         profile, _ = Profile.objects.get_or_create(user=request.user)
         profile.mark_kyc_verified()
+        profile.mark_myid_verified()
         # Помеченный профиль — это approved и для get_verification_status; сам
         # сервис не импортируем: он тянет opencv ради распознавания документов.
         return Response(VerificationStatusSerializer({

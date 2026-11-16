@@ -94,9 +94,14 @@ def _serialize_owner(item, request):
             'avatar': avatar,
             'rating': profile.rating,
             'verified': bool(profile.is_verified_kyc),
+            # Значок «Проверен MyID».
+            'myid_verified': profile.myid_verified,
         }
     except Exception:
-        return {'id': item.owner.id, 'full_name': '', 'rating': 0, 'verified': False, 'account_type': 'private'}
+        return {
+            'id': item.owner.id, 'full_name': '', 'rating': 0, 'verified': False,
+            'myid_verified': False, 'account_type': 'private',
+        }
 
 
 class PromotionFlagsMixin(serializers.Serializer):
@@ -276,6 +281,8 @@ class ItemUpdateSerializer(serializers.ModelSerializer):
         request = self.context.get('request')
         if request and request.user and request.user.is_staff:
             return value
+        if self.instance is not None and self.instance.status == Item.STATUS_BLOCKED:
+            raise serializers.ValidationError('Объявление скрыто модератором — вернуть его может только поддержка.')
         if value not in [Item.STATUS_INACTIVE, Item.STATUS_PENDING]:
             raise serializers.ValidationError('Владелец может снять объявление или отправить его на повторную модерацию.')
         return value
