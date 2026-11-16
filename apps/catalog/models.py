@@ -95,6 +95,13 @@ class Item(models.Model):
     # быть 40 одинаковых стульев. Свободный остаток на дату — quantity минус
     # забронированное (apps.crm).
     quantity = models.PositiveIntegerField('Количество', default=1, validators=[MinValueValidator(1)])
+    # Снято при окончании тарифа (сверх лимита FREE): статус, в который вернуть
+    # объявление, когда тариф снова оплачен. Пусто — не снималось по тарифу.
+    plan_paused_status = models.CharField('Снято по тарифу (вернуть в статус)', max_length=20, blank=True)
+    # Платное продвижение (apps.billing): действует, пока дата в будущем.
+    # Порядок выдачи — apps.catalog.ranking.
+    top_until = models.DateTimeField('В топе до', null=True, blank=True, db_index=True)
+    vip_until = models.DateTimeField('VIP до', null=True, blank=True, db_index=True)
     # «Торг»: владелец готов обсуждать цену. Показывается рядом с ценой в
     # каталоге и на карточке — это заявление о числе, а не статус модерации.
     # Умолчание False: объявление, размещённое до появления поля, не должно

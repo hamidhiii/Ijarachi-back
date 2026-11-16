@@ -220,6 +220,44 @@ Web Push: `endpoint` подписки — только HTTPS к push-серви�
 тариф ниже, пока текущий действует, — 400 `PLAN_DOWNGRADE_WHILE_ACTIVE`.
 Период — `BILLING_PERIOD_DAYS` (30).
 
+**Оплата** — разовым платежом за период, продление вручную (новый заказ):
+`POST /api/v1/billing/orders/` `{"kind": "plan", "plan": "start", "provider": "click" | "payme"}`
+→ 201 с `redirect_url` на чекаут. Режимы те же, что у сделки (`PAYMENTS_MODE`):
+`live` — Click/Payme, `stub` (dev/staging) — заказ сразу оплачен, `off` — 503
+`PAYMENT_METHOD_UNAVAILABLE`. Заказ — `BillingOrder` (тариф или продвижение),
+применяет его `services.mark_order_paid` ровно один раз (заказ под блокировкой).
+Остальное: `GET /billing/plans/` (публично), `GET /billing/subscription/`
+(тариф, срок, `days_left`, лимит, `paused_listings`), `GET /billing/orders/[{id}/]`.
+
+Обработчики провайдеров (только `PAYMENTS_MODE=live`, иначе 404), отдельно от
+вебхуков сделки:
+- **Payme** `POST /api/v1/billing/payme/` — [apps/billing/payme.py](apps/billing/payme.py):
+  CheckPerformTransaction, CreateTransaction, PerformTransaction,
+  CancelTransaction, CheckTransaction, GetStatement. Счёт `account.order_id`,
+  сумма в тийинах, ответ всегда HTTP 200, Basic `Paycom:<PAYME_SECRET_KEY>`.
+  Одна транзакция на заказ (вторая — -31052), не проведённая за 12 ч
+  отменяется (reason 4), проведённую не отменяем (-31007: услуга выдана).
+- **Click** `POST /api/v1/billing/click/prepare/` и `/complete/` —
+  [apps/billing/click.py](apps/billing/click.py): `merchant_trans_id` = id заказа,
+  сумма в сумах, подпись md5 (у Complete с `merchant_prepare_id`); повторный
+  Complete — «уже оплачен» (-4), ошибка Click в Complete отменяет заказ (-9).
+
+Перед списанием (Check/Create, Prepare) заказ проверяется ещё раз: не отменён,
+тариф всё ещё можно купить. Если тариф ниже действующего всё же оплатили (две
+вкладки), деньги приняты, а заказ помечен `needs_attention` для сотрудника.
+
+**Окончание тарифа** — задача `expire_subscriptions` (Beat, каждый час): тариф
+истёк → FREE; активные объявления сверх лимита уходят в `inactive` с пометкой
+`plan_paused_status` (остаются VIP, топ, затем самые свежие), ничего не
+удаляется. После новой оплаты такие объявления возвращаются в прежний статус
+сами, сколько позволяет лимит; если владелец сам менял статус — не трогаем.
+**Напоминания** — `remind_subscriptions` (Beat, 10:00): за 3 дня и в последний
+день по местной дате; уведомление типа `billing` (WebSocket, Telegram, Web Push)
+со ссылкой на `OWNER_FRONTEND_BASE_URL/billing`. Обе задачи идемпотентны.
+
+**Права тарифа** — `apps.billing.plans.require_feature(user, 'statistics' | 'staff_access' | 'branches' | 'data_export')`:
+403 `{"code": "PLAN_FEATURE_REQUIRED", "feature", "required_plan", "current_plan"}`.
+
 **Лимит активных объявлений** (`pending` + `approved`) —
 [apps/catalog/limits.py](apps/catalog/limits.py), при создании и при активации
 (снятое/отклонённое → на модерацию), под `select_for_update` пользователя.

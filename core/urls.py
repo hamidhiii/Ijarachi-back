@@ -24,6 +24,7 @@ urlpatterns = [
     path('api/v1/', include('apps.chat.urls')),
     path('api/v1/', include('apps.notifications.urls')),
     path('api/v1/payments/', include('apps.payments.urls')),
+    path('api/v1/billing/', include('apps.billing.urls')),
     path('api/v1/admin-api/dashboard/', AdminDashboardView.as_view(), name='admin-dashboard'),
     path('api/v1/admin-api/finance/export/', AdminFinanceExportView.as_view(), name='admin-finance-export'),
     path('api/v1/admin-api/users/<int:pk>/status/', AdminUserBlockView.as_view(), name='admin-user-status'),

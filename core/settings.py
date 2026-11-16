@@ -268,6 +268,15 @@ CELERY_BEAT_SCHEDULE = {
         'task': 'apps.bookings.tasks.expire_stale_bookings',
         'schedule': crontab(minute=15),
     },
+    # Тарифы: окончание (переход на FREE) — каждый час, напоминания — утром.
+    'expire-subscriptions-hourly': {
+        'task': 'apps.billing.tasks.expire_subscriptions',
+        'schedule': crontab(minute=5),
+    },
+    'remind-subscriptions-daily': {
+        'task': 'apps.billing.tasks.remind_subscriptions',
+        'schedule': crontab(hour=10, minute=0),
+    },
 }
 
 # ─── Media & Static ───────────────────────────────────────────────────────────
@@ -424,6 +433,12 @@ PLATFORM_COMMISSION_PERCENT = config('PLATFORM_COMMISSION_PERCENT', default=15, 
 # (apps.billing): FREE 10, START 100, BUSINESS 300, PRO без лимита.
 # Сколько дней даёт одна оплата тарифа («месяц»).
 BILLING_PERIOD_DAYS = config('BILLING_PERIOD_DAYS', default=30, cast=int)
+# Кабинет владельца (CRM, тарифы) — отдельный фронт. Отсюда ссылки в
+# уведомлениях о тарифе и адрес возврата после оплаты заказа.
+OWNER_FRONTEND_BASE_URL = config('OWNER_FRONTEND_BASE_URL', default='https://owner.rentoo.uz')
+BILLING_RETURN_URL_TEMPLATE = config(
+    'BILLING_RETURN_URL_TEMPLATE', default='https://owner.rentoo.uz/billing/orders/{id}',
+)
 
 # OTP settings
 OTP_EXPIRY_SECONDS = config('OTP_EXPIRY_SECONDS', default=120, cast=int)

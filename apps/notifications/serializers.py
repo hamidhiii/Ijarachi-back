@@ -9,6 +9,7 @@ DEFAULT_TITLES = {
     Notification.TYPE_PAYMENT: 'Обновление по оплате',
     Notification.TYPE_CHAT: 'Новое сообщение',
     Notification.TYPE_SYSTEM: 'Системное уведомление',
+    Notification.TYPE_BILLING: 'Тариф и оплата',
 }
 
 

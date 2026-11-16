@@ -273,6 +273,10 @@ class ItemUpdateSerializer(serializers.ModelSerializer):
         )
         if changed and not is_staff and instance.status == Item.STATUS_APPROVED and 'status' not in validated_data:
             validated_data['status'] = Item.STATUS_PENDING
+        if 'status' in validated_data:
+            # Владелец сам распорядился объявлением, снятым по тарифу, — после
+            # оплаты тарифа его больше не возвращаем автоматически.
+            validated_data['plan_paused_status'] = ''
         # Снятое или отклонённое, отправленное снова на модерацию, опять
         # занимает место в лимите — иначе лимит обходится «снял → вернул».
         reviving = (

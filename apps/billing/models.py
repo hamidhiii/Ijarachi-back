@@ -111,3 +111,108 @@ class SubscriptionPeriod(models.Model):
 
     def __str__(self):
         return f'{self.user} — {self.plan} {self.starts_at:%d.%m.%Y}–{self.ends_at:%d.%m.%Y}'
+
+
+class BillingOrder(models.Model):
+    """
+    Заказ на разовую оплату: месяц тарифа или продвижение объявления.
+
+    Оплата — Click или Payme (заглушка при PAYMENTS_MODE=stub). Состояние
+    транзакции провайдера хранится здесь же: у заказа одна транзакция, после
+    отмены заказ закрыт, и для новой попытки создаётся новый заказ.
+    """
+    KIND_PLAN = 'plan'
+    KIND_PROMOTION = 'promotion'
+    KIND_CHOICES = [
+        (KIND_PLAN, 'Тариф'),
+        (KIND_PROMOTION, 'Продвижение'),
+    ]
+
+    PROMO_TOP = 'top'
+    PROMO_VIP = 'vip'
+    PROMO_CHOICES = [
+        (PROMO_TOP, 'Поднять в топ'),
+        (PROMO_VIP, 'VIP'),
+    ]
+
+    STATUS_PENDING = 'pending'
+    STATUS_PAID = 'paid'
+    STATUS_CANCELLED = 'cancelled'
+    STATUS_CHOICES = [
+        (STATUS_PENDING, 'Ждёт оплаты'),
+        (STATUS_PAID, 'Оплачен'),
+        (STATUS_CANCELLED, 'Отменён'),
+    ]
+
+    PROVIDER_CLICK = 'click'
+    PROVIDER_PAYME = 'payme'
+    # PAYMENTS_MODE=stub (только dev/staging): заказ оплачен без денег.
+    PROVIDER_STUB = 'stub'
+    PROVIDER_CHOICES = [
+        (PROVIDER_CLICK, 'Click'),
+        (PROVIDER_PAYME, 'Payme'),
+        (PROVIDER_STUB, 'Заглушка (тест)'),
+    ]
+
+    # Состояния транзакции Payme (Merchant API).
+    PAYME_CREATED = 1
+    PAYME_PERFORMED = 2
+    PAYME_CANCELLED = -1
+    PAYME_CANCELLED_AFTER_PERFORM = -2
+
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.PROTECT,
+        related_name='billing_orders', verbose_name='Пользователь',
+    )
+    kind = models.CharField('Что оплачивается', max_length=20, choices=KIND_CHOICES)
+    plan = models.ForeignKey(
+        Plan, on_delete=models.PROTECT, null=True, blank=True,
+        related_name='orders', verbose_name='Тариф',
+    )
+    promotion = models.CharField('Продвижение', max_length=10, choices=PROMO_CHOICES, blank=True)
+    item = models.ForeignKey(
+        'catalog.Item', on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='billing_orders', verbose_name='Объявление',
+    )
+    amount = models.DecimalField('Сумма (сум)', max_digits=12, decimal_places=0)
+    status = models.CharField('Статус', max_length=20, choices=STATUS_CHOICES, default=STATUS_PENDING)
+    provider = models.CharField('Провайдер', max_length=20, choices=PROVIDER_CHOICES)
+    # Payme: id транзакции; Click: click_trans_id.
+    provider_transaction_id = models.CharField('ID транзакции провайдера', max_length=100, blank=True, db_index=True)
+    provider_state = models.SmallIntegerField('Состояние транзакции', default=0)
+    # Метки Payme в миллисекундах — их же возвращаем в ответах.
+    provider_create_time = models.BigIntegerField(null=True, blank=True)
+    provider_perform_time = models.BigIntegerField(null=True, blank=True)
+    provider_cancel_time = models.BigIntegerField(null=True, blank=True)
+    cancel_reason = models.SmallIntegerField(null=True, blank=True)
+    raw = models.JSONField('Данные провайдера', default=dict, blank=True)
+    # Оплата прошла, но применить её не получилось (например, тариф ниже уже
+    # действующего) — нужен сотрудник.
+    needs_attention = models.CharField('Требует внимания', max_length=300, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    paid_at = models.DateTimeField('Оплачен', null=True, blank=True)
+
+    class Meta:
+        verbose_name = 'Заказ (оплата)'
+        verbose_name_plural = 'Заказы (оплаты)'
+        ordering = ['-created_at']
+        constraints = [
+            models.UniqueConstraint(
+                fields=['provider', 'provider_transaction_id'],
+                condition=~models.Q(provider_transaction_id=''),
+                name='billing_order_unique_provider_tx',
+            ),
+        ]
+
+    def __str__(self):
+        return f'Заказ #{self.pk} {self.get_kind_display()} {self.amount} — {self.get_status_display()}'
+
+    @property
+    def amount_tiyin(self):
+        return int(self.amount) * 100
+
+    @property
+    def title(self):
+        if self.kind == self.KIND_PLAN and self.plan_id:
+            return f'Тариф {self.plan.name} на {settings.BILLING_PERIOD_DAYS} дней'
+        return f'{self.get_promotion_display()}: «{self.item.title if self.item else "объявление"}»'
