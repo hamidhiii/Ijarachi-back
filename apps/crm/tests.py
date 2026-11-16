@@ -103,6 +103,12 @@ class ReservationStockTests(CrmTestCase):
         self.assertEqual(Reservation.objects.get().status, 'cancelled')
         self.assertEqual(self.reserve(10).status_code, 201)
 
+    def test_quantity_cannot_drop_below_booked(self):
+        self.reserve(7, 1, 2)
+        url = reverse('listing-detail', kwargs={'pk': self.item.pk})
+        self.assertEqual(self.client.patch(url, {'quantity': 6}, format='json').status_code, 400)
+        self.assertEqual(self.client.patch(url, {'quantity': 7}, format='json').status_code, 200)
+
     def test_public_calendar_blocks_only_fully_booked_days(self):
         self.reserve(10, 1, 1)
         self.reserve(3, 2, 2)

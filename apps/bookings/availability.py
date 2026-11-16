@@ -104,8 +104,8 @@ def is_range_free(item, start, end, exclude_booking=None, units=1, exclude_reser
     return all(counts.get(day, 0) + units <= item.quantity for day in _days(start, end))
 
 
-def booked_dates(item) -> list[str]:
-    """Дни, занятые полностью (свободных единиц нет), начиная с сегодняшнего."""
+def future_units_by_day(item) -> dict:
+    """Занятые единицы по дням с сегодняшнего до конца последней активной брони."""
     from apps.crm.models import Reservation
 
     today = timezone.localdate()
@@ -115,9 +115,12 @@ def booked_dates(item) -> list[str]:
     ).order_by('-end_date')
     ends = [qs.values_list('end_date', flat=True).first() for qs in (last, last_reservation)]
     ends = [end for end in ends if end]
-    if not ends:
-        return []
-    counts = units_by_day(item, today, max(ends))
+    return units_by_day(item, today, max(ends)) if ends else {}
+
+
+def booked_dates(item) -> list[str]:
+    """Дни, занятые полностью (свободных единиц нет), начиная с сегодняшнего."""
+    counts = future_units_by_day(item)
     return sorted(day.isoformat() for day, used in counts.items() if used >= item.quantity)
 
 

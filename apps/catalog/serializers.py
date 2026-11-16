@@ -277,6 +277,19 @@ class ItemUpdateSerializer(serializers.ModelSerializer):
     def validate_attributes(self, value):
         return validate_item_attributes(value)
 
+    def validate_quantity(self, value):
+        # Меньше, чем уже забронировано на какой-то будущий день, — нельзя:
+        # иначе брони окажутся на вещи, которых нет.
+        if self.instance is not None and value < self.instance.quantity:
+            from apps.bookings.availability import future_units_by_day
+
+            busiest = max(future_units_by_day(self.instance).values(), default=0)
+            if value < busiest:
+                raise serializers.ValidationError(
+                    f'На ближайшие даты уже забронировано {busiest} шт. — количество не может быть меньше.'
+                )
+        return value
+
     def validate_status(self, value):
         request = self.context.get('request')
         if request and request.user and request.user.is_staff:
