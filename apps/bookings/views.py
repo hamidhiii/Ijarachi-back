@@ -34,6 +34,7 @@ from .serializers import (
     require_handover_photo,
 )
 from core.schema import DetailSerializer
+from core.feature_flags import DealFlowRequiredMixin
 
 logger = logging.getLogger('apps.bookings')
 
@@ -93,7 +94,7 @@ def verification_required_response():
         'либо дата начала позже даты конца.'
     ),
 )
-class DealPreviewView(APIView):
+class DealPreviewView(DealFlowRequiredMixin, APIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def post(self, request):
@@ -114,7 +115,7 @@ class DealPreviewView(APIView):
         '«вы получите X» в форме объявления. Без авторизации.'
     ),
 )
-class PayoutPreviewView(APIView):
+class PayoutPreviewView(DealFlowRequiredMixin, APIView):
     permission_classes = [permissions.AllowAny]
 
     def get(self, request):
@@ -134,7 +135,7 @@ class PayoutPreviewView(APIView):
         responses={201: BookingDetailSerializer, 403: DetailSerializer},
     ),
 )
-class DealCreateView(generics.ListCreateAPIView):
+class DealCreateView(DealFlowRequiredMixin, generics.ListCreateAPIView):
     """
     GET  /api/v1/deals/?role=renter|owner — список сделок пользователя.
     POST /api/v1/deals/ — черновик сделки; даты фиксируются при начале оплаты.
@@ -176,7 +177,7 @@ class DealCreateView(generics.ListCreateAPIView):
         return Response(BookingDetailSerializer(deal, context={'request': request}).data, status=status.HTTP_201_CREATED)
 
 
-class BookingCreateView(generics.CreateAPIView):
+class BookingCreateView(DealFlowRequiredMixin, generics.CreateAPIView):
     """
     Legacy POST /api/v1/bookings/create/.
     Creates a payment-pending deal and locks dates immediately.
@@ -217,7 +218,7 @@ class BookingCreateView(generics.CreateAPIView):
 
 
 @extend_schema(parameters=[ROLE_PARAMETER], responses={200: BookingListSerializer(many=True)})
-class MyDealsView(generics.ListAPIView):
+class MyDealsView(DealFlowRequiredMixin, generics.ListAPIView):
     """
     GET /api/v1/deals/list/?role=renter|owner
     """
@@ -239,7 +240,7 @@ class MyRentalsView(MyDealsView):
     """
 
 
-class DealDetailView(generics.RetrieveAPIView):
+class DealDetailView(DealFlowRequiredMixin, generics.RetrieveAPIView):
     """
     GET /api/v1/deals/{id}/
     """
@@ -284,7 +285,7 @@ class BookingDetailView(DealDetailView):
         '503 — выбранный способ оплаты выключен.'
     ),
 )
-class DealPayView(APIView):
+class DealPayView(DealFlowRequiredMixin, APIView):
     permission_classes = [permissions.IsAuthenticated]
     throttle_scope = 'payments'
 
@@ -397,7 +398,7 @@ class DealPayView(APIView):
         'В ответе полная карточка сделки.'
     ),
 )
-class ConfirmReturnView(APIView):
+class ConfirmReturnView(DealFlowRequiredMixin, APIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def post(self, request, pk):
@@ -423,7 +424,7 @@ class ConfirmReturnView(APIView):
         return Response(BookingDetailSerializer(deal, context={'request': request}).data)
 
 
-class DisputeView(APIView):
+class DisputeView(DealFlowRequiredMixin, APIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def post(self, request, pk):
@@ -459,7 +460,7 @@ class DisputeView(APIView):
         '400 — сделка не в споре либо deposit_withheld больше залога.'
     ),
 )
-class DisputeResolveView(APIView):
+class DisputeResolveView(DealFlowRequiredMixin, APIView):
     permission_classes = [permissions.IsAdminUser]
 
     def post(self, request, pk):
@@ -502,7 +503,7 @@ class DisputeResolveView(APIView):
         '404 — сделки нет.'
     ),
 )
-class DealReviewView(APIView):
+class DealReviewView(DealFlowRequiredMixin, APIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def post(self, request, pk):
@@ -554,7 +555,7 @@ class DealReviewView(APIView):
         '404 — сделки нет.'
     ),
 )
-class BookingPhotoUploadView(APIView):
+class BookingPhotoUploadView(DealFlowRequiredMixin, APIView):
     permission_classes = [permissions.IsAuthenticated]
     parser_classes = [MultiPartParser, FormParser]
 
@@ -628,7 +629,7 @@ class BookingPhotoUploadView(APIView):
         'в ошибках поля status.'
     ),
 )
-class BookingStatusUpdateView(APIView):
+class BookingStatusUpdateView(DealFlowRequiredMixin, APIView):
     """
     PATCH /api/v1/deals/{id}/status/ and legacy /bookings/{id}/status/.
     """

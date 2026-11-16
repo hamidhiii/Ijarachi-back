@@ -409,6 +409,11 @@ BOOKING_REQUIRE_HANDOVER_PHOTO = config('BOOKING_REQUIRE_HANDOVER_PHOTO', defaul
 # предела одна заявка на «0001–9999» раздувала бы календарь на миллионы дат.
 BOOKING_MAX_DAYS = config('BOOKING_MAX_DAYS', default=365, cast=int)
 
+# Сделка через платформу (оформление, оплата, эскроу, залог, кошелёк, споры, торг,
+# комиссия). С 16.11.2026 Rentoo — доска объявлений с платными тарифами, сделка
+# выключена, но не удалена: см. core/feature_flags.py.
+DEAL_FLOW_ENABLED = config('DEAL_FLOW_ENABLED', default=False, cast=bool)
+
 # Platform commission (%)
 # Комиссия платформы, %. Модель B: удерживается из выплаты владельцу, арендатор
 # платит цену владельца без надбавки (решение 27.10.2026 — 15 %).

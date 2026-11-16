@@ -2,10 +2,13 @@ import logging
 from celery import shared_task
 from django.conf import settings
 
+from core.feature_flags import skip_unless_deal_flow
+
 logger = logging.getLogger('apps.bookings')
 
 
 @shared_task(bind=True, max_retries=3, default_retry_delay=60)
+@skip_unless_deal_flow
 def notify_owner_new_booking(self, booking_id: int):
     """
     Уведомляет владельца о новом запросе аренды: запись в Notification
@@ -43,6 +46,7 @@ def notify_owner_new_booking(self, booking_id: int):
 
 
 @shared_task(bind=True, max_retries=3, default_retry_delay=120)
+@skip_unless_deal_flow
 def notify_expiring_bookings(self):
     """Daily task: notify renters whose rental expires tomorrow."""
     try:
@@ -69,6 +73,7 @@ def notify_expiring_bookings(self):
 
 
 @shared_task(bind=True, max_retries=3, default_retry_delay=300)
+@skip_unless_deal_flow
 def release_escrow(self, booking_id: int):
     """
     Сделка завершена: аренда (за вычетом комиссии) — в кошелёк владельцу,
@@ -85,6 +90,7 @@ def release_escrow(self, booking_id: int):
 
 
 @shared_task(bind=True, max_retries=3, default_retry_delay=300)
+@skip_unless_deal_flow
 def expire_stale_bookings(self):
     """
     Отменяет заявки, которые никто не подтвердил и не оплатил дольше
@@ -121,6 +127,7 @@ def expire_stale_bookings(self):
 
 
 @shared_task(bind=True, max_retries=3, default_retry_delay=60)
+@skip_unless_deal_flow
 def notify_status_change(self, booking_id: int, actor_user_id: int = None):
     """
     Уведомляет о смене статуса сделки: если актёр — одна из сторон, уведомляем

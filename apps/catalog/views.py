@@ -27,6 +27,7 @@ from .serializers import (
     OfferRespondSerializer,
 )
 from .filters import ItemFilter, filter_by_attributes
+from core.feature_flags import DealFlowRequiredMixin
 
 logger = logging.getLogger('apps.catalog')
 
@@ -496,7 +497,7 @@ def _notify_offer(user, offer, title, message):
         logger.exception('Failed to notify about offer #%s', offer.id)
 
 
-class OfferListCreateView(generics.ListCreateAPIView):
+class OfferListCreateView(DealFlowRequiredMixin, generics.ListCreateAPIView):
     """
     GET — the caller's own offer threads: `?role=owner` for offers received
     on their listings, otherwise offers they made as a renter. `?item=<id>`
@@ -550,7 +551,7 @@ class OfferListCreateView(generics.ListCreateAPIView):
         )
 
 
-class OfferRespondView(APIView):
+class OfferRespondView(DealFlowRequiredMixin, APIView):
     """
     POST /offers/{id}/respond/ — accept, reject, or counter the thread's
     current (pending) offer. Only the side that did NOT make that last

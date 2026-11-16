@@ -11,6 +11,9 @@ from .settings import *  # noqa: F401,F403
 APP_ENV = 'staging'
 PAYMENTS_MODE = 'stub'
 MYID_MODE = 'stub'
+# Тесты сделки (блоки 1–2) идут со включённой сделкой; поведение при
+# выключенном флаге проверяет apps/bookings/test_deal_flow_flag.py.
+DEAL_FLOW_ENABLED = True
 
 CACHES = {'default': {'BACKEND': 'django.core.cache.backends.locmem.LocMemCache'}}
 CHANNEL_LAYERS = {'default': {'BACKEND': 'channels.layers.InMemoryChannelLayer'}}

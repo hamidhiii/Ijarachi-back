@@ -12,6 +12,7 @@ from .models import Payment
 from .services import finalize_paid_payment
 from apps.bookings.models import Booking
 from core.runtime_modes import payments_live
+from core.feature_flags import DealFlowRequiredMixin
 
 logger = logging.getLogger('apps.payments')
 
@@ -31,7 +32,7 @@ class LiveWebhookMixin:
 
 # ─── Payme ────────────────────────────────────────────────────────────────────
 
-class PaymeWebhookView(LiveWebhookMixin, APIView):
+class PaymeWebhookView(DealFlowRequiredMixin, LiveWebhookMixin, APIView):
     """
     POST /api/v1/payments/payme/webhook/
     Handles Payme merchant API (JSON-RPC 2.0).
@@ -190,7 +191,7 @@ class PaymeWebhookView(LiveWebhookMixin, APIView):
 
 # ─── Click ────────────────────────────────────────────────────────────────────
 
-class ClickWebhookView(LiveWebhookMixin, APIView):
+class ClickWebhookView(DealFlowRequiredMixin, LiveWebhookMixin, APIView):
     """
     POST /api/v1/payments/click/webhook/
     Handles Click SHOP API (Prepare + Complete steps).
