@@ -378,7 +378,9 @@ def handle_callback(callback):
 
     try:
         with transaction.atomic():
-            fresh = Reservation.objects.select_for_update().select_related('item', 'client', 'owner').get(pk=reservation_id)
+            # of=self: клиент необязателен (LEFT JOIN), а Postgres не блокирует
+            # nullable-сторону внешнего соединения.
+            fresh = Reservation.objects.select_for_update(of=('self',)).select_related('item', 'client', 'owner').get(pk=reservation_id)
             done = _apply(fresh, action, lang, user)
     except CrmError as exc:
         detail = exc.detail.get('detail') if isinstance(exc.detail, dict) else str(exc.detail)
