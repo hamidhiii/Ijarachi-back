@@ -30,10 +30,10 @@ def remind_reservations():
     today = timezone.localdate()
     sent = 0
     jobs = (
-        ('pickup_reminded_on', Reservation.objects.filter(start_date=today, status=Reservation.STATUS_BOOKED), 'Сегодня выдача'),
-        ('return_reminded_on', Reservation.objects.filter(end_date=today, status__in=Reservation.OCCUPYING_STATUSES), 'Сегодня возврат'),
+        ('pickup_reminded_on', Reservation.objects.filter(start_date=today, status=Reservation.STATUS_BOOKED), 'Сегодня выдача', 'pickup'),
+        ('return_reminded_on', Reservation.objects.filter(end_date=today, status__in=Reservation.OCCUPYING_STATUSES), 'Сегодня возврат', 'return'),
     )
-    for field, qs, title in jobs:
+    for field, qs, title, kind in jobs:
         for reservation in qs.exclude(**{field: today}).select_related('item', 'client', 'owner'):
             # Тариф кончился (FREE без CRM) — не напоминаем, бронь остаётся.
             if not has_feature(reservation.owner, 'crm'):
@@ -47,6 +47,8 @@ def remind_reservations():
             for user in _recipients(reservation.owner):
                 create_notification(user, Notification.TYPE_CRM, {
                     'title': title, 'message': message, 'link': link, 'reservation_id': reservation.pk,
+                    # `kind` — для Telegram: подключивший CRM-бота получает карточку с кнопками.
+                    'kind': kind,
                 })
             sent += 1
     logger.info('CRM reminders sent: %s', sent)

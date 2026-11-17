@@ -50,6 +50,24 @@ def resolve_account(request):
     return member.owner, member.role
 
 
+def editor_role(user, owner):
+    """
+    The user's role in `owner`'s cabinet when they may change bookings there
+    (owner or manager, plan in force), else None. For actions outside the
+    API — the Telegram bot's buttons.
+    """
+    if not user or not owner:
+        return None
+    if not has_feature(owner, 'crm'):
+        return None
+    if user.pk == owner.pk:
+        return ROLE_OWNER
+    member = StaffMember.objects.filter(owner=owner, user=user).first()
+    if member is None or member.role != StaffMember.ROLE_MANAGER or not has_feature(owner, 'staff_access'):
+        return None
+    return member.role
+
+
 class OwnerAccountMixin:
     """
     Для APIView кабинета: self.account — владелец, self.role — роль.

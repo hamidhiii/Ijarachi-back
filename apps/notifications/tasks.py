@@ -47,6 +47,16 @@ def send_telegram_notification(self, notification_id: int):
         from apps.users.telegram_bot import get_telegram_link, send_telegram_message
 
         notification = Notification.objects.select_related('user', 'user__profile').get(pk=notification_id)
+        # Напоминание CRM — в CRM-бот карточкой с кнопками, если он подключён;
+        # иначе, как раньше, текстом в бот уведомлений. CRM-бот подключают отдельно,
+        # поэтому общий переключатель notify_telegram его не выключает.
+        payload = notification.payload or {}
+        if notification.type == Notification.TYPE_CRM and payload.get('kind') and payload.get('reservation_id'):
+            from apps.crm.telegram import send_reminder
+
+            if send_reminder(notification.user, payload['reservation_id']):
+                return
+
         try:
             if not notification.user.profile.notify_telegram:
                 return

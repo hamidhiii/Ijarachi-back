@@ -473,6 +473,10 @@ TELEGRAM_WEBHOOK_SECRET = config('TELEGRAM_WEBHOOK_SECRET', default='')
 # initData токеном именно этого бота, а он не тот, что шлёт OTP (@Rentoo_auth_bot).
 # Пусто — проверяем только TELEGRAM_BOT_TOKEN.
 TELEGRAM_WEBAPP_BOT_TOKEN = config('TELEGRAM_WEBAPP_BOT_TOKEN', default='')
+# CRM-бот для прокатов (отдельный от OTP и Mini App): напоминания о выдаче и
+# возврате с кнопками, /bugun. Пусто — CRM-уведомления идут текстом через OTP-бот.
+CRM_BOT_TOKEN = config('CRM_BOT_TOKEN', default='')
+CRM_BOT_USERNAME = config('CRM_BOT_USERNAME', default='')
 # Если код не удалось отправить в Telegram (или номер ещё не привязан к боту) — падать в SMS
 OTP_SMS_FALLBACK_ENABLED = config('OTP_SMS_FALLBACK_ENABLED', default=False, cast=bool)
 

@@ -52,6 +52,14 @@ START. На FREE — 403 `{code: PLAN_FEATURE_REQUIRED, feature: "crm", required
 открыт на любом тарифе: по `plan` фронт решает, показать кабинет или тарифы. Поле `crm`
 добавлено в `GET /billing/plans/`.
 
+**CRM-бот** (17.11.2026) — отдельный Telegram-бот (`CRM_BOT_TOKEN`, `CRM_BOT_USERNAME`).
+`GET /owner/telegram/` → `{available, linked, username, bot}`; `POST` → то же + `link`
+(одноразовая `https://t.me/<бот>?start=<токен>`, час; 503 `CRM_BOT_UNAVAILABLE`, если бот
+не настроен); `DELETE` → 204, отключить. Привязка личная (пользователь, не кабинет).
+Подключившему утреннее напоминание приходит в CRM-бот карточкой с кнопками (Выдано /
+Перенести / Отмена; Принято / Есть повреждение / Продлить), `/bugun` — карточки на сегодня.
+В payload уведомления `crm` добавлено `kind`: `pickup` | `return`.
+
 «Активное» объявление — `pending` или `approved`. Месяц тарифа — 30 дней.
 
 ---

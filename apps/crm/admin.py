@@ -1,6 +1,6 @@
 from django.contrib import admin
 
-from .models import Branch, Client, Reservation, StaffMember
+from .models import Branch, Client, CrmBotLink, Reservation, StaffMember
 
 
 @admin.register(Branch)
@@ -28,3 +28,10 @@ class ReservationAdmin(admin.ModelAdmin):
     list_filter = ('status', 'source')
     search_fields = ('item__title', 'owner__phone', 'client__name', 'client__phone')
     date_hierarchy = 'start_date'
+
+
+@admin.register(CrmBotLink)
+class CrmBotLinkAdmin(admin.ModelAdmin):
+    list_display = ('user', 'chat_id', 'username', 'language', 'linked_at')
+    search_fields = ('user__phone', 'username')
+    raw_id_fields = ('user',)

@@ -155,3 +155,27 @@ class Reservation(models.Model):
 
     def __str__(self):
         return f'{self.item_id} × {self.quantity}: {self.start_date}–{self.end_date}'
+
+
+class CrmBotLink(models.Model):
+    """
+    Чат CRM-бота, привязанный к пользователю: владелец или менеджер нажал в
+    кабинете «Подключить Telegram» и открыл бота по одноразовой ссылке
+    (apps.crm.telegram). Туда приходят напоминания с кнопками.
+    """
+    user = models.OneToOneField(
+        settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='crm_bot_link', verbose_name='Пользователь',
+    )
+    chat_id = models.BigIntegerField('Telegram chat_id', unique=True)
+    username = models.CharField('Telegram username', max_length=64, blank=True)
+    # Язык сообщений: из language_code Telegram, по умолчанию узбекский.
+    language = models.CharField('Язык', max_length=2, default='uz')
+    linked_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = 'CRM-бот: привязка'
+        verbose_name_plural = 'CRM-бот: привязки'
+
+    def __str__(self):
+        return f'{self.user_id} -> chat {self.chat_id}'

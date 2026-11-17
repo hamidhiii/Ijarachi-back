@@ -1,5 +1,6 @@
 from django.urls import path
 
+from .bot_views import CrmBotLinkView
 from .views import (
     AccountsView,
     BranchDetailView,
@@ -34,4 +35,5 @@ urlpatterns = [
     path('clients/<int:pk>/', ClientDetailView.as_view(), name='owner-client-detail'),
     path('stats/', StatsView.as_view(), name='owner-stats'),
     path('export/<str:entity>/', ExportView.as_view(), name='owner-export'),
+    path('telegram/', CrmBotLinkView.as_view(), name='owner-telegram'),
 ]
