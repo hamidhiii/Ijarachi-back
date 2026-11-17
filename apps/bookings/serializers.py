@@ -5,7 +5,7 @@ from django.db.models import Avg
 from drf_spectacular.utils import extend_schema_field
 from rest_framework import serializers
 
-from .models import Booking, BookingPhoto, DealReview
+from .models import Booking, BookingPhoto, DealReview, DepositOperation
 from apps.catalog.models import Item
 from core.schema import UserMiniSerializer
 
@@ -14,21 +14,32 @@ def platform_commission_rate() -> Decimal:
     return Decimal(str(settings.PLATFORM_COMMISSION_PERCENT)) / Decimal('100')
 
 
-def compute_pricing(item, start, end) -> dict:
+def compute_pricing(item, start, end, renter=None) -> dict:
     """
-    Общий расчёт стоимости — используется и при создании сделки, и в
-    POST /deals/preview/ (тот же результат до создания объекта).
+    Общий расчёт стоимости — и при создании сделки, и в POST /deals/preview/.
+
+    Модель B: арендатор платит цену владельца за сутки × дни плюс залог;
+    комиссия платформы (PLATFORM_COMMISSION_PERCENT) удерживается из выплаты
+    владельцу, а не добавляется сверху. Если у арендатора есть принятое
+    предложение цены по этому объявлению — считается от согласованной цены.
     """
+    from apps.catalog.models import Offer
+
+    offer = Offer.accepted_for(item, renter) if renter is not None else None
+    price_per_day = offer.amount if offer is not None else item.price_per_day
     days = (end - start).days + 1
-    rental_cost = item.price_per_day * days
+    rental_cost = price_per_day * days
     commission = (rental_cost * platform_commission_rate()).quantize(Decimal('1'))
-    total = rental_cost + commission + item.deposit
     return {
         'days': days,
-        'price_per_day': item.price_per_day,
+        'price_per_day': price_per_day,
+        'listed_price_per_day': item.price_per_day,
+        'offer_id': offer.pk if offer is not None else None,
         'deposit': item.deposit,
+        'rental_cost': rental_cost,
         'commission_amount': commission,
-        'total_price': total,
+        'owner_payout': rental_cost - commission,
+        'total_price': rental_cost + item.deposit,
     }
 
 
@@ -47,8 +58,7 @@ class BookingCreateSerializer(serializers.ModelSerializer):
         start = data['start_date']
         end = data['end_date']
 
-        if start > end:
-            raise serializers.ValidationError('Дата начала не может быть позже даты окончания.')
+        validate_rental_dates(item, start, end)
 
         if item.status != Item.STATUS_APPROVED:
             raise serializers.ValidationError('Эта вещь недоступна для аренды.')
@@ -56,11 +66,11 @@ class BookingCreateSerializer(serializers.ModelSerializer):
         if item.owner == self.context['request'].user:
             raise serializers.ValidationError('Нельзя арендовать собственную вещь.')
 
-        try:
-            if not item.availability.is_available(start, end):
-                raise serializers.ValidationError('Выбранные даты уже заняты.')
-        except Item.availability.RelatedObjectDoesNotExist:
-            pass
+        # Предварительная проверка для понятной ошибки. Окончательная — под
+        # блокировкой объявления во вьюхе, где бронь и занимает даты.
+        from .availability import is_range_free
+        if not is_range_free(item, start, end):
+            raise serializers.ValidationError('Выбранные даты уже заняты.')
 
         return data
 
@@ -68,7 +78,8 @@ class BookingCreateSerializer(serializers.ModelSerializer):
         item = validated_data['item']
         start = validated_data['start_date']
         end = validated_data['end_date']
-        pricing = compute_pricing(item, start, end)
+        renter = self.context['request'].user
+        pricing = compute_pricing(item, start, end, renter=renter)
         initial_status = self.context.get('initial_status', Booking.STATUS_DRAFT)
 
         return Booking.objects.create(
@@ -77,12 +88,33 @@ class BookingCreateSerializer(serializers.ModelSerializer):
             start_date=start,
             end_date=end,
             price_per_day=pricing['price_per_day'],
+            offer_id=pricing['offer_id'],
             deposit_amount=pricing['deposit'],
             commission_amount=pricing['commission_amount'],
             total_price=pricing['total_price'],
             renter_comment=validated_data.get('renter_comment', ''),
             escrow_amount=pricing['total_price'],
+            deposit_status=Booking.DEPOSIT_PENDING if pricing['deposit'] > 0 else Booking.DEPOSIT_NONE,
             status=initial_status,
+        )
+
+
+def validate_rental_dates(item, start, end):
+    """Даты брони: не в прошлом, не короче min_rental_days, не длиннее BOOKING_MAX_DAYS."""
+    from django.utils import timezone
+
+    if start > end:
+        raise serializers.ValidationError('Дата начала не может быть позже даты окончания.')
+    if start < timezone.localdate():
+        raise serializers.ValidationError('Дата начала аренды уже прошла.')
+    days = (end - start).days + 1
+    if days < item.min_rental_days:
+        raise serializers.ValidationError(
+            f'Минимальный срок аренды этой вещи — {item.min_rental_days} дн.'
+        )
+    if days > settings.BOOKING_MAX_DAYS:
+        raise serializers.ValidationError(
+            f'Аренда не может быть длиннее {settings.BOOKING_MAX_DAYS} дней.'
         )
 
 
@@ -96,17 +128,50 @@ class DealPreviewSerializer(serializers.Serializer):
     end_date = serializers.DateField()
 
     def validate(self, attrs):
-        if attrs['start_date'] > attrs['end_date']:
-            raise serializers.ValidationError('Дата начала не может быть позже даты окончания.')
+        validate_rental_dates(attrs['item'], attrs['start_date'], attrs['end_date'])
         return attrs
+
+
+class PayoutPreviewQuerySerializer(serializers.Serializer):
+    price_per_day = serializers.DecimalField(max_digits=12, decimal_places=0, min_value=Decimal('1'))
+    days = serializers.IntegerField(min_value=1, default=1)
+
+
+class PayoutPreviewResponseSerializer(serializers.Serializer):
+    """«Вы получите X» — для владельца, пока он вводит цену."""
+    commission_percent = serializers.IntegerField()
+    rental_cost = serializers.DecimalField(max_digits=14, decimal_places=0)
+    commission_amount = serializers.DecimalField(max_digits=14, decimal_places=0)
+    owner_payout = serializers.DecimalField(max_digits=14, decimal_places=0)
+
+
+def payout_preview(price_per_day, days=1) -> dict:
+    rental_cost = Decimal(price_per_day) * days
+    commission = (rental_cost * platform_commission_rate()).quantize(Decimal('1'))
+    return {
+        'commission_percent': settings.PLATFORM_COMMISSION_PERCENT,
+        'rental_cost': rental_cost,
+        'commission_amount': commission,
+        'owner_payout': rental_cost - commission,
+    }
 
 
 class DealPreviewResponseSerializer(serializers.Serializer):
     days = serializers.IntegerField()
-    price_per_day = serializers.DecimalField(max_digits=12, decimal_places=0)
+    price_per_day = serializers.DecimalField(
+        max_digits=12, decimal_places=0, help_text='Цена за сутки для этой сделки — согласованная, если торг принят.',
+    )
+    listed_price_per_day = serializers.DecimalField(max_digits=12, decimal_places=0, help_text='Цена из объявления.')
+    offer_id = serializers.IntegerField(allow_null=True, help_text='Принятое предложение, по которому посчитано.')
     deposit = serializers.DecimalField(max_digits=12, decimal_places=0)
-    commission_amount = serializers.DecimalField(max_digits=12, decimal_places=0)
-    total_price = serializers.DecimalField(max_digits=12, decimal_places=0)
+    rental_cost = serializers.DecimalField(max_digits=12, decimal_places=0, help_text='Цена за сутки × дни.')
+    commission_amount = serializers.DecimalField(
+        max_digits=12, decimal_places=0, help_text='Комиссия платформы — удерживается из выплаты владельцу.',
+    )
+    owner_payout = serializers.DecimalField(max_digits=12, decimal_places=0, help_text='Владелец получит.')
+    total_price = serializers.DecimalField(
+        max_digits=12, decimal_places=0, help_text='Арендатор платит: аренда + залог, без комиссии сверху.',
+    )
 
 
 class BookingPhotoSerializer(serializers.ModelSerializer):
@@ -180,6 +245,15 @@ class DealPhotoSerializer(serializers.ModelSerializer):
     @extend_schema_field(UserMiniSerializer)
     def get_uploaded_by(self, obj):
         return _serialize_user_mini(obj.uploaded_by)
+
+
+class DepositOperationSerializer(serializers.ModelSerializer):
+    """Строка истории залога в карточке сделки."""
+
+    class Meta:
+        model = DepositOperation
+        fields = ['id', 'type', 'amount', 'comment', 'created_at']
+        read_only_fields = fields
 
 
 def public_status_field():
@@ -278,12 +352,15 @@ class BookingDetailSerializer(serializers.ModelSerializer):
     item_title = serializers.CharField(source='item.title', read_only=True)
     progress_renter = serializers.SerializerMethodField()
     progress_owner = serializers.SerializerMethodField()
+    deposit_operations = serializers.SerializerMethodField()
+    owner_payout = serializers.SerializerMethodField()
 
     class Meta:
         model = Booking
         fields = [
             'id', 'listing', 'owner', 'renter', 'start_date', 'end_date',
             'amount', 'status', 'viewer_role', 'photos', 'created_at',
+            'deposit_status', 'deposit_operations', 'offer', 'owner_payout',
             # Дополнительные поля для обратной совместимости с мобильным клиентом.
             'item', 'item_title', 'owner_phone', 'owner_contact', 'renter_contact',
             'days', 'price_per_day', 'deposit_amount', 'commission_amount', 'total_price',
@@ -297,6 +374,8 @@ class BookingDetailSerializer(serializers.ModelSerializer):
             'total_price',
             'escrow_status',
             'escrow_amount',
+            'deposit_status',
+            'offer',
         ]
 
     @extend_schema_field(ListingMiniSerializer)
@@ -318,6 +397,15 @@ class BookingDetailSerializer(serializers.ModelSerializer):
     @extend_schema_field(viewer_role_field())
     def get_viewer_role(self, obj):
         return _viewer_role(obj, self.context.get('request'))
+
+    @extend_schema_field(serializers.DecimalField(max_digits=14, decimal_places=0))
+    def get_owner_payout(self, obj):
+        """Сколько получит владелец: аренда минус комиссия (модель B)."""
+        return obj.price_per_day * obj.days - obj.commission_amount
+
+    @extend_schema_field(DepositOperationSerializer(many=True))
+    def get_deposit_operations(self, obj):
+        return DepositOperationSerializer(obj.deposit_operations.all(), many=True).data
 
     @extend_schema_field(DealPhotoSerializer(many=True))
     def get_photos(self, obj):
@@ -412,6 +500,14 @@ def require_handover_photo(booking, new_status):
         raise serializers.ValidationError(message)
 
 
+def booking_pays_in_cash(booking) -> bool:
+    """Сделка оплачивается наличными, если последним выбран способ cash."""
+    from apps.payments.models import Payment
+
+    latest = booking.payments.order_by('-created_at', '-pk').first()
+    return latest is not None and latest.provider == Payment.PROVIDER_CASH
+
+
 class BookingStatusUpdateSerializer(serializers.Serializer):
     """Status transitions based on role."""
     ALLOWED_TRANSITIONS = {
@@ -458,6 +554,13 @@ class BookingStatusUpdateSerializer(serializers.Serializer):
             raise serializers.ValidationError(
                 f'Переход из "{booking.status}" в "{new_status}" не разрешён.'
             )
+        if role == 'owner' and new_status == Booking.STATUS_PAID and not booking_pays_in_cash(booking):
+            # Онлайн-оплату подтверждает провайдер (вебхук или заглушка), а не
+            # владелец: иначе сделка стала бы «оплаченной» без единого платежа.
+            raise serializers.ValidationError(
+                'Подтвердить бронь вручную можно только при оплате наличными. '
+                'Онлайн-оплата подтверждается после поступления платежа.'
+            )
         if role != 'admin':
             require_handover_photo(booking, new_status)
         return new_status
@@ -474,6 +577,15 @@ class BookingStatusUpdateSerializer(serializers.Serializer):
 
 class DealPaySerializer(serializers.Serializer):
     provider = serializers.ChoiceField(choices=['click', 'payme', 'cash'])
+
+
+class DisputeResolutionSerializer(serializers.Serializer):
+    """POST /deals/{id}/resolve-dispute/ — решение сотрудника по залогу."""
+    deposit_withheld = serializers.DecimalField(
+        max_digits=12, decimal_places=0, min_value=Decimal('0'),
+        help_text='Сколько залога удержать в пользу владельца; остальное вернётся арендатору.',
+    )
+    comment = serializers.CharField(max_length=500, required=False, allow_blank=True)
 
 
 class DealPayResponseSerializer(serializers.Serializer):

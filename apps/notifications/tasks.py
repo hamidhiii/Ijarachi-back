@@ -102,7 +102,18 @@ def send_web_push(self, notification_id: int):
             'notification_id': notification.pk,
         }
 
+        from rest_framework.exceptions import ValidationError
+
+        from .serializers import validate_push_endpoint
+
         for sub in PushSubscription.objects.filter(user=notification.user):
+            try:
+                validate_push_endpoint(sub.endpoint)
+            except ValidationError:
+                # Подписка из времени до проверки адресов: на чужой хост не шлём.
+                logger.warning('Dropping push subscription #%s with untrusted endpoint', sub.pk)
+                sub.delete()
+                continue
             try:
                 webpush(
                     subscription_info=sub.as_webpush_subscription_info(),

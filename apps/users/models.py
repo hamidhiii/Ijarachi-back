@@ -52,7 +52,22 @@ class Profile(models.Model):
         (VERIFICATION_VERIFIED, 'Верифицирован'),
     ]
 
+    # Тип аккаунта (решение 27.10.2026). Частное лицо сдаёт свои вещи, магазин
+    # (прокат, салон) переключается сам в настройках и получает бейдж «Магазин»
+    # и часы работы на витрине. Лимит объявлений и остальные возможности с
+    # 16.11.2026 задаёт тариф (apps.billing), а не тип аккаунта. Один аккаунт
+    # по-прежнему может и сдавать, и арендовать.
+    ACCOUNT_PRIVATE = 'private'
+    ACCOUNT_SHOP = 'shop'
+    ACCOUNT_TYPE_CHOICES = [
+        (ACCOUNT_PRIVATE, 'Частное лицо'),
+        (ACCOUNT_SHOP, 'Магазин'),
+    ]
+
     user = models.OneToOneField(CustomUser, on_delete=models.CASCADE, related_name='profile')
+    account_type = models.CharField(
+        'Тип аккаунта', max_length=10, choices=ACCOUNT_TYPE_CHOICES, default=ACCOUNT_PRIVATE,
+    )
     full_name = models.CharField('ФИО', max_length=200, blank=True)
     avatar = models.ImageField('Аватар', upload_to='avatars/', blank=True, null=True)
     # Витрина продавца: то, что видят арендаторы на карточках и на публичной
@@ -60,10 +75,16 @@ class Profile(models.Model):
     shop_name = models.CharField('Название магазина / ник', max_length=60, blank=True)
     about = models.TextField('О себе', max_length=500, blank=True)
     location = models.CharField('Локация магазина', max_length=120, blank=True)
+    # Свободной строкой («Пн–Сб 10:00–20:00»): расписания бывают с перерывами и
+    # выходными, а структура пока никому не нужна, кроме глаз арендатора.
+    working_hours = models.CharField('Часы работы', max_length=120, blank=True)
     rating = models.FloatField('Рейтинг', default=0.0)
     rating_count = models.PositiveIntegerField('Кол-во оценок', default=0)
     wallet_balance = models.DecimalField('Баланс (сум)', max_digits=14, decimal_places=0, default=0)
     is_verified_kyc = models.BooleanField(default=False)
+    # Личность подтверждена через MyID (значок «Проверен MyID» на карточках).
+    # Ставит интеграция MyID; пока её нет — заглушка в dev/staging.
+    myid_verified_at = models.DateTimeField('Проверен MyID', null=True, blank=True)
     kyc_verified_at = models.DateTimeField(null=True, blank=True)
     # Дублировать уведомления в Telegram-бот (тот же, что доставляет OTP) —
     # включено по умолчанию, пользователь может выключить в настройках.
@@ -82,6 +103,24 @@ class Profile(models.Model):
     def __str__(self):
         return f'Профиль — {self.user.phone}'
 
+    @property
+    def is_shop(self):
+        return self.account_type == self.ACCOUNT_SHOP
+
+    @property
+    def listing_limit(self):
+        """Лимит активных объявлений по тарифу; None — без лимита (PRO)."""
+        from apps.catalog.limits import listing_limit
+        return listing_limit(self.user)
+
+    @property
+    def myid_verified(self):
+        return self.myid_verified_at is not None
+
+    def mark_myid_verified(self):
+        self.myid_verified_at = timezone.now()
+        self.save(update_fields=['myid_verified_at'])
+
     def mark_kyc_verified(self):
         self.is_verified_kyc = True
         self.kyc_verified_at = timezone.now()
@@ -98,6 +137,9 @@ class OTPCode(models.Model):
     code = models.CharField('OTP код', max_length=6)
     created_at = models.DateTimeField(auto_now_add=True)
     is_used = models.BooleanField(default=False)
+    # Неудачные попытки ввода по этому номеру, пока код жив. После
+    # OTP_MAX_ATTEMPTS код гасится — иначе 6 цифр подбираются перебором.
+    attempts = models.PositiveSmallIntegerField('Неудачных попыток', default=0)
 
     class Meta:
         verbose_name = 'OTP код'
@@ -271,6 +313,7 @@ class PhoneChangeRequest(models.Model):
     code = models.CharField(max_length=6)
     created_at = models.DateTimeField(auto_now_add=True)
     is_used = models.BooleanField(default=False)
+    attempts = models.PositiveSmallIntegerField('Неудачных попыток', default=0)
 
     class Meta:
         ordering = ['-created_at']

@@ -2,6 +2,8 @@ import re
 
 from drf_spectacular.utils import extend_schema_field
 from rest_framework import serializers
+from rest_framework.exceptions import ValidationError
+from rest_framework_simplejwt.serializers import TokenRefreshSerializer
 from rest_framework_simplejwt.tokens import RefreshToken
 from django.contrib.auth import get_user_model
 from .models import Profile, KYCDocument, PassportDocument, FaceVerification
@@ -38,6 +40,24 @@ class VerifyOTPSerializer(serializers.Serializer):
         return normalize_uz_phone(value)
 
 
+class ActiveUserTokenRefreshSerializer(TokenRefreshSerializer):
+    """
+    Обновление токена, которое отказывает заблокированному (is_active=False) или
+    удалённому пользователю. Стандартный сериализатор SimpleJWT пользователя не
+    проверяет и продолжает выдавать новые access-токены.
+    """
+
+    def validate(self, attrs):
+        from rest_framework_simplejwt.exceptions import InvalidToken
+        from rest_framework_simplejwt.settings import api_settings
+
+        token = self.token_class(attrs['refresh'])
+        user_id = token.get(api_settings.USER_ID_CLAIM)
+        if not User.objects.filter(**{api_settings.USER_ID_FIELD: user_id, 'is_active': True}).exists():
+            raise InvalidToken({'code': 'user_inactive', 'detail': 'Пользователь заблокирован или удалён.'})
+        return super().validate(attrs)
+
+
 class TokenPairSerializer(serializers.Serializer):
     """Response schema for JWT token pair."""
     access = serializers.CharField()
@@ -52,16 +72,22 @@ class ProfileSerializer(serializers.ModelSerializer):
     phone = serializers.CharField(source='user.phone', read_only=True)
     email = serializers.EmailField(source='user.email', required=False)
     verified = serializers.BooleanField(source='is_verified_kyc', read_only=True)
+    myid_verified = serializers.BooleanField(read_only=True)
     role = serializers.SerializerMethodField()
     telegram_connected = serializers.SerializerMethodField()
     telegram_deep_link = serializers.SerializerMethodField()
+    # Сколько объявлений может быть активно (на модерации + опубликовано) по
+    # тарифу и сколько уже есть, см. apps.catalog.limits. null — без лимита.
+    listing_limit = serializers.IntegerField(read_only=True, allow_null=True)
+    live_listings = serializers.SerializerMethodField()
 
     class Meta:
         model = Profile
         fields = [
             'id', 'phone', 'email', 'full_name', 'avatar',
-            'shop_name', 'about', 'location',
-            'rating', 'verified', 'role',
+            'account_type', 'shop_name', 'about', 'location', 'working_hours',
+            'listing_limit', 'live_listings',
+            'rating', 'verified', 'myid_verified', 'role',
             'notify_telegram', 'telegram_connected', 'telegram_deep_link',
             # Доп. поля для обратной совместимости с мобильным клиентом.
             'rating_count', 'verification_status', 'wallet_balance',
@@ -97,7 +123,23 @@ class ProfileSerializer(serializers.ModelSerializer):
             return None
         return build_deep_link(obj.user.phone)
 
+    @extend_schema_field(serializers.IntegerField())
+    def get_live_listings(self, obj):
+        from apps.catalog.limits import live_listing_count
+        return live_listing_count(obj.user)
+
     def update(self, instance, validated_data):
+        # Магазин без названия — пустая плашка на каждой карточке. Проверяется
+        # итоговое состояние: и при переключении, и при стирании названия у
+        # уже переключённого магазина. Здесь, а не в validate(): оттуда ошибка
+        # уходит списками, а API отвечает плоским {code, detail}.
+        account_type = validated_data.get('account_type', instance.account_type)
+        shop_name = validated_data.get('shop_name', instance.shop_name)
+        if account_type == Profile.ACCOUNT_SHOP and not (shop_name or '').strip():
+            raise ValidationError({
+                'code': 'shop_name_required',
+                'detail': 'Чтобы стать магазином, укажите название магазина.',
+            })
         user_data = validated_data.pop('user', {})
         if 'email' in user_data:
             instance.user.email = user_data['email']
@@ -111,24 +153,30 @@ class PublicUserSerializer(serializers.ModelSerializer):
     rating = serializers.SerializerMethodField()
     rating_count = serializers.SerializerMethodField()
     verified = serializers.SerializerMethodField()
+    myid_verified = serializers.SerializerMethodField()
     role = serializers.SerializerMethodField()
     is_verified_kyc = serializers.SerializerMethodField()
     verification_status = serializers.SerializerMethodField()
     shop_name = serializers.SerializerMethodField()
     about = serializers.SerializerMethodField()
     location = serializers.SerializerMethodField()
+    account_type = serializers.SerializerMethodField()
+    working_hours = serializers.SerializerMethodField()
 
     class Meta:
         model = User
         fields = [
             'id',
             'full_name',
+            'account_type',
             'shop_name',
             'about',
             'location',
+            'working_hours',
             'avatar',
             'rating',
             'verified',
+            'myid_verified',
             'role',
             # Доп. поля для обратной совместимости с мобильным клиентом.
             'rating_count',
@@ -149,6 +197,19 @@ class PublicUserSerializer(serializers.ModelSerializer):
     @extend_schema_field(serializers.CharField())
     def get_location(self, obj):
         return getattr(getattr(obj, 'profile', None), 'location', '') or ''
+
+    @extend_schema_field(serializers.ChoiceField(choices=[c for c, _ in Profile.ACCOUNT_TYPE_CHOICES]))
+    def get_account_type(self, obj):
+        return getattr(getattr(obj, 'profile', None), 'account_type', Profile.ACCOUNT_PRIVATE)
+
+    @extend_schema_field(serializers.CharField())
+    def get_working_hours(self, obj):
+        # Часы работы — часть витрины магазина; у частника их не показываем,
+        # даже если остались с тех пор, как он был магазином.
+        profile = getattr(obj, 'profile', None)
+        if not profile or not profile.is_shop:
+            return ''
+        return profile.working_hours or ''
 
     @extend_schema_field(serializers.URLField(allow_null=True))
     def get_avatar(self, obj):
@@ -190,6 +251,11 @@ class PublicUserSerializer(serializers.ModelSerializer):
             return False
 
     get_verified = get_is_verified_kyc
+
+    @extend_schema_field(serializers.BooleanField())
+    def get_myid_verified(self, obj):
+        profile = getattr(obj, 'profile', None)
+        return bool(profile and profile.myid_verified)
 
     @extend_schema_field(serializers.ChoiceField(choices=['admin', 'user']))
     def get_role(self, obj):

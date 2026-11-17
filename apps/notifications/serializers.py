@@ -9,6 +9,8 @@ DEFAULT_TITLES = {
     Notification.TYPE_PAYMENT: 'Обновление по оплате',
     Notification.TYPE_CHAT: 'Новое сообщение',
     Notification.TYPE_SYSTEM: 'Системное уведомление',
+    Notification.TYPE_BILLING: 'Тариф и оплата',
+    Notification.TYPE_CRM: 'Кабинет владельца',
 }
 
 
@@ -92,6 +94,28 @@ class PushSubscriptionKeysSerializer(serializers.Serializer):
     auth = serializers.CharField()
 
 
+def validate_push_endpoint(value: str) -> str:
+    """
+    Подписку отдаёт браузер, но присылает её клиент — значит, endpoint может
+    быть любым адресом. Воркер Celery шлёт на него POST, поэтому без проверки
+    это запрос сервера на произвольный URL (SSRF: внутренние адреса, метаданные
+    облака). Принимаем только HTTPS к известным push-сервисам браузеров.
+    """
+    from urllib.parse import urlsplit
+
+    from django.conf import settings
+
+    parts = urlsplit(value)
+    host = (parts.hostname or '').lower()
+    allowed = any(
+        host == suffix or host.endswith('.' + suffix)
+        for suffix in settings.WEB_PUSH_ALLOWED_HOSTS
+    )
+    if parts.scheme != 'https' or parts.port not in (None, 443) or not allowed:
+        raise serializers.ValidationError('Неизвестный push-сервис.')
+    return value
+
+
 class PushSubscriptionSerializer(serializers.Serializer):
     """
     POST /push/subscribe/ — тело ровно то, что отдаёт браузер из
@@ -99,6 +123,9 @@ class PushSubscriptionSerializer(serializers.Serializer):
     """
     endpoint = serializers.URLField(max_length=500)
     keys = PushSubscriptionKeysSerializer()
+
+    def validate_endpoint(self, value):
+        return validate_push_endpoint(value)
 
     def create(self, validated_data):
         user = self.context['request'].user

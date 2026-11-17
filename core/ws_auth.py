@@ -14,7 +14,9 @@ def _get_user_from_token(token):
     User = get_user_model()
     try:
         access = AccessToken(token)
-        return User.objects.get(pk=access['user_id'])
+        # Заблокированный пользователь не подключается к сокетам — как и в REST,
+        # где JWTAuthentication отклоняет is_active=False.
+        return User.objects.get(pk=access['user_id'], is_active=True)
     except (TokenError, User.DoesNotExist, KeyError):
         return AnonymousUser()
 

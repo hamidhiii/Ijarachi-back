@@ -44,11 +44,3 @@ def build_payme_url(payment: Payment) -> str:
     )
     encoded = base64.b64encode(raw.encode('utf-8')).decode('ascii')
     return f'https://checkout.paycom.uz/{encoded}'
-
-
-def build_redirect_url(payment: Payment) -> str:
-    if payment.provider == Payment.PROVIDER_CLICK:
-        return build_click_url(payment)
-    if payment.provider == Payment.PROVIDER_PAYME:
-        return build_payme_url(payment)
-    raise ValueError(f'No checkout URL builder for provider={payment.provider!r}')

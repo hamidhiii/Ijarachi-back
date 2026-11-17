@@ -2,10 +2,13 @@ import logging
 from celery import shared_task
 from django.conf import settings
 
+from core.feature_flags import skip_unless_deal_flow
+
 logger = logging.getLogger('apps.bookings')
 
 
 @shared_task(bind=True, max_retries=3, default_retry_delay=60)
+@skip_unless_deal_flow
 def notify_owner_new_booking(self, booking_id: int):
     """
     Уведомляет владельца о новом запросе аренды: запись в Notification
@@ -43,6 +46,7 @@ def notify_owner_new_booking(self, booking_id: int):
 
 
 @shared_task(bind=True, max_retries=3, default_retry_delay=120)
+@skip_unless_deal_flow
 def notify_expiring_bookings(self):
     """Daily task: notify renters whose rental expires tomorrow."""
     try:
@@ -69,91 +73,36 @@ def notify_expiring_bookings(self):
 
 
 @shared_task(bind=True, max_retries=3, default_retry_delay=300)
+@skip_unless_deal_flow
 def release_escrow(self, booking_id: int):
     """
-    Triggered when booking is COMPLETED.
-    Platform keeps the configured commission, owner gets the payout credited to wallet_balance.
+    Сделка завершена: аренда (за вычетом комиссии) — в кошелёк владельцу,
+    залог — в кошелёк арендатору. Вся логика и защита от двойного расчёта —
+    в apps.bookings.settlement.
     """
-    from decimal import Decimal
     try:
-        from apps.bookings.models import Booking
-        from apps.payments.models import Payment, Transaction
-        from django.db import transaction as db_transaction
+        from apps.bookings.settlement import settle_completed_booking
 
-        booking = Booking.objects.select_related('item__owner__profile').get(pk=booking_id)
-
-        cash_payment = Payment.objects.filter(booking=booking, provider=Payment.PROVIDER_CASH).first()
-        if cash_payment:
-            # Наличные владелец получил из рук в руки: платформа их не держала и
-            # не выплачивает. Комиссия по таким сделкам автоматически не удерживается.
-            cash_payment.status = Payment.STATUS_COMPLETED
-            cash_payment.save(update_fields=['status', 'updated_at'])
-            booking.status = Booking.STATUS_COMPLETED
-            booking.escrow_status = Booking.ESCROW_NONE
-            booking.save(update_fields=['status', 'escrow_status', 'updated_at'])
-            logger.info('Booking #%s settled in cash, no payout from escrow', booking_id)
-            return
-
-        payment = Payment.objects.filter(
-            booking=booking,
-            status=Payment.STATUS_PAID,
-        ).first()
-
-        if not payment:
-            logger.warning('No paid payment found for booking #%s during escrow release', booking_id)
-            return
-
-        # amount stored in tiyin (×100), convert to sums
-        total_sums = Decimal(str(payment.amount)) / 100
-        commission_rate = Decimal(str(settings.PLATFORM_COMMISSION_PERCENT)) / Decimal('100')
-        rental_income = booking.price_per_day * booking.days
-        owner_payout = (rental_income * (Decimal('1') - commission_rate)).quantize(Decimal('1'))
-
-        with db_transaction.atomic():
-            profile = booking.item.owner.profile
-            profile.wallet_balance += owner_payout
-            profile.save(update_fields=['wallet_balance'])
-
-            payment.status = Payment.STATUS_COMPLETED
-            payment.save(update_fields=['status', 'updated_at'])
-
-            booking.status = Booking.STATUS_COMPLETED
-            booking.escrow_status = Booking.ESCROW_RELEASED
-            booking.save(update_fields=['status', 'escrow_status', 'updated_at'])
-
-            Transaction.objects.create(
-                booking=booking,
-                payment=payment,
-                user=booking.item.owner,
-                type=Transaction.TYPE_PAYOUT,
-                amount=owner_payout,
-                currency='UZS',
-                metadata={'source': 'release_escrow'},
-            )
-
-        logger.info(
-            'Escrow released for booking #%s: total=%s sums, owner payout=%s sums',
-            booking_id, total_sums, owner_payout,
-        )
-
+        settle_completed_booking(booking_id)
     except Exception as exc:
         logger.error('release_escrow failed for booking #%s: %s', booking_id, exc)
         raise self.retry(exc=exc)
 
 
 @shared_task(bind=True, max_retries=3, default_retry_delay=300)
+@skip_unless_deal_flow
 def expire_stale_bookings(self):
     """
     Отменяет заявки, которые никто не подтвердил и не оплатил дольше
-    BOOKING_ABANDON_TIMEOUT_HOURS, и освобождает даты в календаре: без этого
-    неотвеченная заявка держит чужую вещь занятой бесконечно.
+    BOOKING_ABANDON_TIMEOUT_HOURS: без этого неотвеченная заявка держит чужую
+    вещь занятой бесконечно.
     """
     from datetime import timedelta
 
     from django.utils import timezone
 
     from apps.bookings.models import Booking
-    from apps.catalog.models import ItemAvailability
+    from apps.bookings.settlement import refund_deposit_on_cancel
 
     limit = timezone.now() - timedelta(hours=settings.BOOKING_ABANDON_TIMEOUT_HOURS)
     stale = Booking.objects.filter(
@@ -163,12 +112,10 @@ def expire_stale_bookings(self):
 
     expired = 0
     for booking in stale:
-        try:
-            avail = ItemAvailability.objects.get(item=booking.item)
-            avail.unblock_range(booking.start_date, booking.end_date)
-        except ItemAvailability.DoesNotExist:
-            pass
+        # Даты освобождаются сами: их занимает бронь, пока она активна. Прежнее
+        # «вычеркнуть диапазон из календаря» стирало и даты чужих броней.
         booking.transition_to(Booking.STATUS_CANCELLED)
+        refund_deposit_on_cancel(booking, 'Заявка истекла без оплаты')
         expired += 1
 
     if expired:
@@ -180,6 +127,7 @@ def expire_stale_bookings(self):
 
 
 @shared_task(bind=True, max_retries=3, default_retry_delay=60)
+@skip_unless_deal_flow
 def notify_status_change(self, booking_id: int, actor_user_id: int = None):
     """
     Уведомляет о смене статуса сделки: если актёр — одна из сторон, уведомляем

@@ -1,7 +1,10 @@
 import logging
 
+from drf_spectacular.utils import extend_schema
+
 from rest_framework import generics, status, permissions
 from rest_framework.response import Response
+from rest_framework.throttling import UserRateThrottle
 from rest_framework.views import APIView
 from rest_framework.parsers import MultiPartParser, FormParser
 from django.db import connection
@@ -11,7 +14,7 @@ from rest_framework.filters import SearchFilter, OrderingFilter
 
 from rest_framework.exceptions import NotFound, ValidationError
 
-from .models import Category, Favorite, Item, ItemImage, ItemAvailability, Offer
+from .models import Category, Favorite, Item, ItemImage, ItemAvailability, ListingDailyStat, Offer
 from .serializers import (
     CategorySerializer,
     ItemListSerializer,
@@ -25,8 +28,11 @@ from .serializers import (
     ListingModerationSerializer,
     OfferSerializer,
     OfferRespondSerializer,
+    PhoneRevealResponseSerializer,
 )
 from .filters import ItemFilter, filter_by_attributes
+from .ranking import search_ordering
+from core.feature_flags import DealFlowRequiredMixin
 
 logger = logging.getLogger('apps.catalog')
 
@@ -54,7 +60,9 @@ class ListingListCreateView(generics.ListCreateAPIView):
     filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
     search_fields = ['title', 'description', 'city']
     ordering_fields = ['price_per_day', 'created_at', 'view_count']
-    ordering = ['-created_at']
+    # Порядок по умолчанию задаёт get_queryset (VIP > топ > приоритет тарифа >
+    # дата); умолчание OrderingFilter перебило бы его.
+    ordering = None
 
     def get_permissions(self):
         if self.request.method == 'POST':
@@ -91,7 +99,14 @@ class ListingListCreateView(generics.ListCreateAPIView):
             qs = qs.order_by('price_per_day')
         elif ordering == '-price':
             qs = qs.order_by('-price_per_day')
+        elif not (ordering == 'relevance' and query) and ordering not in self._filter_orderings():
+            # Выдача по умолчанию: VIP > топ > приоритет BUSINESS/PRO > дата.
+            qs = qs.order_by(*search_ordering())
         return filter_by_attributes(qs, self.request.query_params)
+
+    def _filter_orderings(self):
+        # Значения, которые сам разберёт OrderingFilter (?ordering=-view_count).
+        return {f'{sign}{field}' for field in self.ordering_fields for sign in ('', '-')}
 
 
 class ItemListView(ListingListCreateView):
@@ -126,11 +141,16 @@ class ListingDetailUpdateDestroyView(generics.RetrieveUpdateDestroyAPIView):
     def retrieve(self, request, *args, **kwargs):
         instance = self.get_object()
         Item.objects.filter(pk=instance.pk).update(view_count=F('view_count') + 1)
+        ListingDailyStat.bump_views(instance.pk)
         instance.view_count += 1
         serializer = self.get_serializer(instance)
         return Response(serializer.data)
 
     def perform_destroy(self, instance):
+        # Мягкое удаление: снять с публикации. Скрытое модератором остаётся
+        # скрытым — иначе «удалить и вернуть» обходило бы блокировку.
+        if instance.status == Item.STATUS_BLOCKED:
+            return
         instance.status = Item.STATUS_INACTIVE
         instance.save(update_fields=['status'])
 
@@ -184,7 +204,10 @@ class ItemUpdateView(generics.RetrieveUpdateDestroyAPIView):
         return Item.objects.filter(owner=self.request.user)
 
     def perform_destroy(self, instance):
-        # Soft-delete: set inactive
+        # Мягкое удаление: снять с публикации. Скрытое модератором остаётся
+        # скрытым — иначе «удалить и вернуть» обходило бы блокировку.
+        if instance.status == Item.STATUS_BLOCKED:
+            return
         instance.status = Item.STATUS_INACTIVE
         instance.save(update_fields=['status'])
 
@@ -206,6 +229,59 @@ class ListingStatsView(APIView):
         })
 
 
+class MyListingsStatsView(APIView):
+    """
+    GET /api/v1/listings/my/stats/
+    Сводная статистика по всем объявлениям — право тарифа BUSINESS и выше
+    (до 16.11.2026 — магазина). Без него 403 `PLAN_FEATURE_REQUIRED`;
+    статистика по одному объявлению (/listings/{id}/stats/) доступна всем.
+    Помесячная статистика с показами номера и сообщениями — /owner/stats/.
+
+    requests — заявки на аренду (все, кроме черновиков, отменённые тоже);
+    deals — оплаченные сделки. Снятые объявления не показываются.
+    """
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request):
+        from apps.billing.plans import require_feature
+        from apps.bookings.models import Booking
+
+        require_feature(request.user, 'statistics')
+
+        paid = [
+            Booking.STATUS_PAID, Booking.STATUS_IN_PROGRESS, Booking.STATUS_RETURNED,
+            Booking.STATUS_COMPLETED, Booking.STATUS_DISPUTED,
+        ]
+        items = (
+            Item.objects
+            .filter(owner=request.user)
+            .exclude(status=Item.STATUS_INACTIVE)
+            .annotate(
+                requests=Count('bookings', filter=~Q(bookings__status=Booking.STATUS_DRAFT), distinct=True),
+                deals=Count('bookings', filter=Q(bookings__status__in=paid), distinct=True),
+            )
+            .order_by('-view_count', '-created_at')
+        )
+        rows = [
+            {
+                'id': item.pk,
+                'title': item.title,
+                'status': item.status,
+                'views': item.view_count,
+                'favorites': item.favorite_count,
+                'requests': item.requests,
+                'deals': item.deals,
+            }
+            for item in items
+        ]
+        totals = {
+            key: sum(row[key] for row in rows)
+            for key in ('views', 'favorites', 'requests', 'deals')
+        }
+        totals['listings'] = len(rows)
+        return Response({'totals': totals, 'listings': rows})
+
+
 class ListingAvailabilityView(APIView):
     permission_classes = [permissions.IsAuthenticatedOrReadOnly]
 
@@ -222,24 +298,45 @@ class ListingAvailabilityView(APIView):
         except Item.DoesNotExist:
             return None
 
+    @staticmethod
+    def _payload(item):
+        from apps.bookings import availability as occupancy
+
+        manual = occupancy.manual_blocked_dates(item)
+        booked = occupancy.booked_dates(item)
+        return {
+            # Всё, что нельзя забронировать — прежнее поле, клиент рисует по нему календарь.
+            'blocked_dates': sorted(set(manual) | set(booked)),
+            # Разбивка: что закрыл владелец (это он и правит PATCH-ем) и что занято бронями.
+            'manual_blocked_dates': sorted(manual),
+            'booked_dates': booked,
+        }
+
     def get(self, request, pk):
         item = self._get_item(request, pk)
         if not item:
             return Response({'detail': 'Объявление не найдено.'}, status=status.HTTP_404_NOT_FOUND)
-        availability, _ = ItemAvailability.objects.get_or_create(item=item)
-        return Response({'blocked_dates': availability.blocked_dates})
+        return Response(self._payload(item))
 
     def patch(self, request, pk):
+        """
+        Заменяет ручные блокировки владельца. Дни, занятые бронями, от ручного
+        списка не зависят: клиент шлёт обратно весь blocked_dates, и они сюда
+        не записываются — иначе после отмены брони дни остались бы закрыты.
+        """
+        from apps.bookings import availability as occupancy
+
         item = self._get_item(request, pk, write=True)
         if not item:
             return Response({'detail': 'Объявление не найдено.'}, status=status.HTTP_404_NOT_FOUND)
 
         serializer = ListingAvailabilitySerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
+        booked = set(occupancy.booked_dates(item))
         availability, _ = ItemAvailability.objects.get_or_create(item=item)
-        availability.blocked_dates = serializer.validated_data['blocked_dates']
+        availability.blocked_dates = [d for d in serializer.validated_data['blocked_dates'] if d not in booked]
         availability.save(update_fields=['blocked_dates'])
-        return Response({'blocked_dates': availability.blocked_dates})
+        return Response(self._payload(item))
 
 
 class ListingReviewsView(generics.ListAPIView):
@@ -367,6 +464,10 @@ class ItemImageUploadView(APIView):
         serializer = ItemImageUploadSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         image = serializer.save(item=item)
+        if item.status == Item.STATUS_APPROVED and not request.user.is_staff:
+            # Новое фото — новый контент: одобренное объявление уходит на повторную модерацию.
+            item.status = Item.STATUS_PENDING
+            item.save(update_fields=['status', 'updated_at'])
         return Response(
             ItemImageSerializer(image, context={'request': request}).data,
             status=status.HTTP_201_CREATED,
@@ -414,7 +515,7 @@ def _notify_offer(user, offer, title, message):
         logger.exception('Failed to notify about offer #%s', offer.id)
 
 
-class OfferListCreateView(generics.ListCreateAPIView):
+class OfferListCreateView(DealFlowRequiredMixin, generics.ListCreateAPIView):
     """
     GET — the caller's own offer threads: `?role=owner` for offers received
     on their listings, otherwise offers they made as a renter. `?item=<id>`
@@ -448,6 +549,15 @@ class OfferListCreateView(generics.ListCreateAPIView):
             raise ValidationError({'code': 'offer_own_item', 'detail': 'Нельзя предложить цену на собственное объявление.'})
         if not item.is_negotiable:
             raise ValidationError({'code': 'offer_not_negotiable', 'detail': 'Владелец не отметил это объявление как готовое к торгу.'})
+        latest = Offer.objects.filter(item=item, renter=self.request.user).order_by('-created_at', '-pk').first()
+        if latest is not None and latest.status == Offer.STATUS_PENDING:
+            # Одна открытая ставка на ветку: ответить или встречно предложить
+            # можно через respond, а не новой строкой рядом.
+            raise ValidationError({
+                'code': 'offer_pending_exists',
+                'detail': 'По этому объявлению уже есть предложение без ответа.',
+                'offer_id': latest.pk,
+            })
 
         offer = serializer.save(
             item=item, renter=self.request.user,
@@ -459,7 +569,7 @@ class OfferListCreateView(generics.ListCreateAPIView):
         )
 
 
-class OfferRespondView(APIView):
+class OfferRespondView(DealFlowRequiredMixin, APIView):
     """
     POST /offers/{id}/respond/ — accept, reject, or counter the thread's
     current (pending) offer. Only the side that did NOT make that last
@@ -519,3 +629,50 @@ class OfferRespondView(APIView):
             )
 
         return Response(OfferSerializer(offer, context={'request': request}).data)
+
+
+class PhoneRevealHourThrottle(UserRateThrottle):
+    scope = 'phone_reveal_hour'
+
+
+class PhoneRevealDayThrottle(UserRateThrottle):
+    scope = 'phone_reveal_day'
+
+
+class ListingPhoneView(APIView):
+    """
+    POST /api/v1/listings/{id}/phone/ — «Показать номер» владельца.
+
+    Только для авторизованных. Каждое нажатие записывается (PhoneReveal:
+    объявление, пользователь, время); в статистику объявления идёт одно нажатие
+    пользователя за 24 часа, нажатия владельца — нет. Частота ограничена —
+    30 в час и 100 в сутки на пользователя (429), чтобы номера нельзя было
+    собирать скриптом.
+    """
+    permission_classes = [permissions.IsAuthenticated]
+    throttle_classes = [UserRateThrottle, PhoneRevealHourThrottle, PhoneRevealDayThrottle]
+
+    @extend_schema(request=None, responses=PhoneRevealResponseSerializer)
+    def post(self, request, pk):
+        from datetime import timedelta
+
+        from django.utils import timezone
+
+        from .models import PhoneReveal
+
+        item = Item.objects.select_related('owner__profile').filter(pk=pk, status=Item.STATUS_APPROVED).first()
+        if item is None:
+            raise NotFound('Объявление не найдено.')
+        is_owner = item.owner_id == request.user.pk
+        already = PhoneReveal.objects.filter(
+            item=item, user=request.user, counted=True,
+            created_at__gte=timezone.now() - timedelta(hours=24),
+        ).exists()
+        PhoneReveal.objects.create(item=item, user=request.user, counted=not (is_owner or already))
+        profile = getattr(item.owner, 'profile', None)
+        return Response({
+            'listing_id': item.pk,
+            'owner_id': item.owner_id,
+            'phone': item.owner.phone,
+            'name': (profile.shop_name or profile.full_name) if profile else '',
+        })

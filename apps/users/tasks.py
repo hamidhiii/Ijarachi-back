@@ -3,10 +3,13 @@ import logging
 from celery import shared_task
 from django.conf import settings
 
+from core.feature_flags import skip_unless_deal_flow
+
 logger = logging.getLogger(__name__)
 
 
 @shared_task(bind=True, max_retries=3, default_retry_delay=120)
+@skip_unless_deal_flow
 def charge_kyc_first_deal_cost(self, user_id: int, booking_id: int):
     if not settings.KYC_ENABLED:
         return

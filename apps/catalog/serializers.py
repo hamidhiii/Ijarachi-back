@@ -1,7 +1,13 @@
+from decimal import Decimal
+
+from django.db import transaction
+from django.utils import timezone
+
 from drf_spectacular.utils import extend_schema_field
 from rest_framework import serializers
 from django.utils.dateparse import parse_date
 
+from .limits import enforce_listing_limit
 from .models import Category, Favorite, Item, ItemImage, ItemAvailability, Offer
 from core.schema import OwnerMiniSerializer, UserMiniSerializer
 from apps.bookings.serializers import _serialize_listing_mini, _serialize_user_mini
@@ -83,15 +89,36 @@ def _serialize_owner(item, request):
             # Название магазина — то, под чем продавец показывается на карточках;
             # пустое, пока он его не задал (тогда клиент берёт full_name).
             'shop_name': profile.shop_name,
+            # private | shop — по нему карточка ставит бейдж «Магазин».
+            'account_type': profile.account_type,
             'avatar': avatar,
             'rating': profile.rating,
             'verified': bool(profile.is_verified_kyc),
+            # Значок «Проверен MyID».
+            'myid_verified': profile.myid_verified,
         }
     except Exception:
-        return {'id': item.owner.id, 'full_name': '', 'rating': 0, 'verified': False}
+        return {
+            'id': item.owner.id, 'full_name': '', 'rating': 0, 'verified': False,
+            'myid_verified': False, 'account_type': 'private',
+        }
 
 
-class ItemListSerializer(serializers.ModelSerializer):
+class PromotionFlagsMixin(serializers.Serializer):
+    """Значки продвижения на карточке: действуют, пока срок не истёк."""
+    is_vip = serializers.SerializerMethodField()
+    is_top = serializers.SerializerMethodField()
+
+    @extend_schema_field(serializers.BooleanField())
+    def get_is_vip(self, obj):
+        return bool(obj.vip_until and obj.vip_until > timezone.now())
+
+    @extend_schema_field(serializers.BooleanField())
+    def get_is_top(self, obj):
+        return bool(obj.top_until and obj.top_until > timezone.now())
+
+
+class ItemListSerializer(PromotionFlagsMixin, serializers.ModelSerializer):
     """Serializer for the /listings/ list — matches the frontend Listing contract."""
     category = CategoryMiniSerializer(read_only=True)
     images = ItemImageSerializer(many=True, read_only=True)
@@ -106,7 +133,7 @@ class ItemListSerializer(serializers.ModelSerializer):
             'id', 'title', 'description', 'category',
             'price_per_day', 'deposit', 'condition',
             'address', 'city', 'district', 'latitude', 'longitude', 'min_rental_days',
-            'is_negotiable',
+            'is_negotiable', 'quantity', 'is_vip', 'is_top',
             'status', 'images', 'attributes', 'owner', 'rating', 'reviews_count',
             'view_count', 'favorite_count', 'is_favorite', 'created_at',
         ]
@@ -134,7 +161,7 @@ class ItemListSerializer(serializers.ModelSerializer):
         return Favorite.objects.filter(user=user, item=obj).exists()
 
 
-class ItemDetailSerializer(serializers.ModelSerializer):
+class ItemDetailSerializer(PromotionFlagsMixin, serializers.ModelSerializer):
     """Full serializer for single item view — matches the frontend Listing contract."""
     images = ItemImageSerializer(many=True, read_only=True)
     category = CategoryMiniSerializer(read_only=True)
@@ -150,16 +177,16 @@ class ItemDetailSerializer(serializers.ModelSerializer):
             'id', 'title', 'description', 'price_per_day', 'deposit',
             'condition', 'status', 'city', 'district', 'address', 'latitude', 'longitude',
             'category', 'images', 'attributes', 'blocked_dates', 'owner', 'created_at',
-            'view_count', 'favorite_count', 'min_rental_days', 'is_negotiable',
+            'view_count', 'favorite_count', 'min_rental_days', 'is_negotiable', 'quantity',
+            'is_vip', 'is_top', 'top_until', 'vip_until',
             'is_favorite', 'rating', 'reviews_count',
         ]
 
     @extend_schema_field(serializers.ListField(child=serializers.CharField(), help_text='YYYY-MM-DD'))
     def get_blocked_dates(self, obj):
-        try:
-            return obj.availability.blocked_dates
-        except ItemAvailability.DoesNotExist:
-            return []
+        # Ручные блокировки владельца плюс дни, занятые бронями.
+        from apps.bookings.availability import blocked_dates
+        return blocked_dates(obj)
 
     @extend_schema_field(OwnerMiniSerializer)
     def get_owner(self, obj):
@@ -193,7 +220,7 @@ class ItemCreateSerializer(serializers.ModelSerializer):
             'title', 'description', 'category',
             'price_per_day', 'deposit', 'condition',
             'address', 'city', 'district', 'latitude', 'longitude', 'min_rental_days',
-            'is_negotiable', 'attributes',
+            'is_negotiable', 'quantity', 'attributes',
         ]
 
     def validate_price_per_day(self, value):
@@ -211,9 +238,12 @@ class ItemCreateSerializer(serializers.ModelSerializer):
 
     def create(self, validated_data):
         user = self.context['request'].user
-        item = Item.objects.create(owner=user, status=Item.STATUS_PENDING, **validated_data)
-        # Create empty availability record
-        ItemAvailability.objects.create(item=item)
+        with transaction.atomic():
+            # Лимит объявлений в работе — по тарифу; проверка под блокировкой пользователя.
+            enforce_listing_limit(user)
+            item = Item.objects.create(owner=user, status=Item.STATUS_PENDING, **validated_data)
+            # Create empty availability record
+            ItemAvailability.objects.create(item=item)
         return item
 
 
@@ -226,19 +256,75 @@ class ItemUpdateSerializer(serializers.ModelSerializer):
             'title', 'description', 'category',
             'price_per_day', 'deposit', 'condition',
             'address', 'city', 'district', 'latitude', 'longitude', 'min_rental_days', 'status',
-            'is_negotiable', 'attributes',
+            'is_negotiable', 'quantity', 'attributes',
         ]
+
+    # Поля, которые видит покупатель и которые прошли модерацию. Правка любого из
+    # них у одобренного объявления возвращает его на модерацию: иначе можно
+    # пройти проверку с безобидным текстом и сразу подменить его чем угодно.
+    MODERATED_FIELDS = ('title', 'description', 'category', 'attributes', 'address', 'district', 'city')
+
+    def validate_price_per_day(self, value):
+        if value <= 0:
+            raise serializers.ValidationError('Цена должна быть больше нуля.')
+        return value
+
+    def validate_deposit(self, value):
+        if value < 0:
+            raise serializers.ValidationError('Залог не может быть отрицательным.')
+        return value
 
     def validate_attributes(self, value):
         return validate_item_attributes(value)
+
+    def validate_quantity(self, value):
+        # Меньше, чем уже забронировано на какой-то будущий день, — нельзя:
+        # иначе брони окажутся на вещи, которых нет.
+        if self.instance is not None and value < self.instance.quantity:
+            from apps.bookings.availability import future_units_by_day
+
+            busiest = max(future_units_by_day(self.instance).values(), default=0)
+            if value < busiest:
+                raise serializers.ValidationError(
+                    f'На ближайшие даты уже забронировано {busiest} шт. — количество не может быть меньше.'
+                )
+        return value
 
     def validate_status(self, value):
         request = self.context.get('request')
         if request and request.user and request.user.is_staff:
             return value
+        if self.instance is not None and self.instance.status == Item.STATUS_BLOCKED:
+            raise serializers.ValidationError('Объявление скрыто модератором — вернуть его может только поддержка.')
         if value not in [Item.STATUS_INACTIVE, Item.STATUS_PENDING]:
             raise serializers.ValidationError('Владелец может снять объявление или отправить его на повторную модерацию.')
         return value
+
+    def update(self, instance, validated_data):
+        request = self.context.get('request')
+        is_staff = bool(request and request.user and request.user.is_staff)
+        changed = any(
+            field in validated_data and validated_data[field] != getattr(instance, field)
+            for field in self.MODERATED_FIELDS
+        )
+        if changed and not is_staff and instance.status == Item.STATUS_APPROVED and 'status' not in validated_data:
+            validated_data['status'] = Item.STATUS_PENDING
+        if 'status' in validated_data:
+            # Владелец сам распорядился объявлением, снятым по тарифу, — после
+            # оплаты тарифа его больше не возвращаем автоматически.
+            validated_data['plan_paused_status'] = ''
+        # Снятое или отклонённое, отправленное снова на модерацию, опять
+        # занимает место в лимите — иначе лимит обходится «снял → вернул».
+        reviving = (
+            not is_staff
+            and validated_data.get('status') == Item.STATUS_PENDING
+            and instance.status not in (Item.STATUS_PENDING, Item.STATUS_APPROVED)
+        )
+        if reviving:
+            with transaction.atomic():
+                enforce_listing_limit(instance.owner)
+                return super().update(instance, validated_data)
+        return super().update(instance, validated_data)
 
 
 class ListingModerationSerializer(serializers.Serializer):
@@ -317,6 +403,11 @@ class OfferSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = ['id', 'renter', 'status', 'proposed_by', 'created_at']
 
+    def validate_amount(self, value):
+        if value <= 0:
+            raise serializers.ValidationError('Цена должна быть больше нуля.')
+        return value
+
     @extend_schema_field(serializers.URLField(allow_null=True))
     def get_item_image(self, obj):
         image = obj.item.primary_image
@@ -341,9 +432,16 @@ class OfferRespondSerializer(serializers.Serializer):
     ACTION_CHOICES = [ACTION_ACCEPT, ACTION_REJECT, ACTION_COUNTER]
 
     action = serializers.ChoiceField(choices=ACTION_CHOICES)
-    amount = serializers.DecimalField(max_digits=12, decimal_places=0, required=False)
+    amount = serializers.DecimalField(max_digits=12, decimal_places=0, required=False, min_value=Decimal('1'))
 
     def validate(self, attrs):
         if attrs['action'] == self.ACTION_COUNTER and not attrs.get('amount'):
             raise serializers.ValidationError({'amount': 'Укажите цену встречного предложения.'})
         return attrs
+
+
+class PhoneRevealResponseSerializer(serializers.Serializer):
+    listing_id = serializers.IntegerField()
+    owner_id = serializers.IntegerField()
+    phone = serializers.CharField()
+    name = serializers.CharField()

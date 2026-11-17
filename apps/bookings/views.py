@@ -12,6 +12,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from .models import Booking, BookingPhoto, DealReview
+from .availability import is_range_free, lock_item
 from .serializers import (
     BookingCreateSerializer,
     BookingDetailSerializer,
@@ -23,13 +24,17 @@ from .serializers import (
     DealPaySerializer,
     DealPreviewResponseSerializer,
     DealPreviewSerializer,
+    DisputeResolutionSerializer,
     DisputeSerializer,
+    PayoutPreviewQuerySerializer,
+    PayoutPreviewResponseSerializer,
     compute_pricing,
+    payout_preview,
     refresh_user_rating,
     require_handover_photo,
 )
-from apps.catalog.models import ItemAvailability
 from core.schema import DetailSerializer
+from core.feature_flags import DealFlowRequiredMixin
 
 logger = logging.getLogger('apps.bookings')
 
@@ -57,6 +62,13 @@ def user_is_kyc_verified(user) -> bool:
         return False
 
 
+def dates_unavailable_response():
+    return Response(
+        {'code': 'DATES_UNAVAILABLE', 'detail': 'Выбранные даты уже заняты. Попробуйте другие.'},
+        status=status.HTTP_409_CONFLICT,
+    )
+
+
 def verification_required_response():
     return Response(
         {
@@ -73,22 +85,44 @@ def verification_required_response():
     summary='Предпросмотр стоимости сделки',
     description=(
         'Тело: {"item", "start_date", "end_date"}. Тот же расчёт, что при создании '
-        'сделки (days, price_per_day, deposit, commission_amount, total_price), но '
-        'ничего не создаёт и не проверяет занятость дат — только цена, до отправки '
-        'запроса. Доступен без KYC: это витрина, а не бронирование.\n\n'
+        'сделки, но ничего не создаёт и не проверяет занятость дат. Доступен без KYC.\n\n'
+        'Модель B: total_price = аренда + залог; комиссия (commission_amount) удерживается '
+        'из выплаты владельцу (owner_payout), сверху не добавляется. Если у вызывающего '
+        'есть принятое предложение цены по этому объявлению, price_per_day — согласованная '
+        'цена и offer_id указывает на него.\n\n'
         '400 — объявления нет/оно не approved (стандартная ошибка поля item), '
         'либо дата начала позже даты конца.'
     ),
 )
-class DealPreviewView(APIView):
+class DealPreviewView(DealFlowRequiredMixin, APIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def post(self, request):
         serializer = DealPreviewSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         data = serializer.validated_data
-        pricing = compute_pricing(data['item'], data['start_date'], data['end_date'])
+        pricing = compute_pricing(data['item'], data['start_date'], data['end_date'], renter=request.user)
         return Response(DealPreviewResponseSerializer(pricing).data)
+
+
+@extend_schema(
+    parameters=[PayoutPreviewQuerySerializer],
+    responses={200: PayoutPreviewResponseSerializer, 400: DetailSerializer},
+    summary='Сколько получит владелец',
+    description=(
+        '?price_per_day=<сум>&days=<дней, по умолчанию 1>. Комиссия платформы '
+        '(PLATFORM_COMMISSION_PERCENT) удерживается из выплаты — для подсказки '
+        '«вы получите X» в форме объявления. Без авторизации.'
+    ),
+)
+class PayoutPreviewView(DealFlowRequiredMixin, APIView):
+    permission_classes = [permissions.AllowAny]
+
+    def get(self, request):
+        serializer = PayoutPreviewQuerySerializer(data=request.query_params)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+        return Response(PayoutPreviewResponseSerializer(payout_preview(data['price_per_day'], data['days'])).data)
 
 
 @extend_schema_view(
@@ -101,7 +135,7 @@ class DealPreviewView(APIView):
         responses={201: BookingDetailSerializer, 403: DetailSerializer},
     ),
 )
-class DealCreateView(generics.ListCreateAPIView):
+class DealCreateView(DealFlowRequiredMixin, generics.ListCreateAPIView):
     """
     GET  /api/v1/deals/?role=renter|owner — список сделок пользователя.
     POST /api/v1/deals/ — черновик сделки; даты фиксируются при начале оплаты.
@@ -127,7 +161,14 @@ class DealCreateView(generics.ListCreateAPIView):
             return verification_required_response()
         serializer = self.get_serializer(data=request.data, context={'request': request})
         serializer.is_valid(raise_exception=True)
-        deal = serializer.save()
+        data = serializer.validated_data
+        with transaction.atomic():
+            # Черновик даты не занимает, но заведомо занятые даты не принимает:
+            # проверка под той же блокировкой объявления, что и при оплате.
+            lock_item(data['item'].pk)
+            if not is_range_free(data['item'], data['start_date'], data['end_date']):
+                return dates_unavailable_response()
+            deal = serializer.save()
         logger.info('Deal #%s draft created: item=%s renter=%s', deal.pk, deal.item_id, request.user.phone)
 
         from apps.bookings.tasks import notify_owner_new_booking
@@ -136,7 +177,7 @@ class DealCreateView(generics.ListCreateAPIView):
         return Response(BookingDetailSerializer(deal, context={'request': request}).data, status=status.HTTP_201_CREATED)
 
 
-class BookingCreateView(generics.CreateAPIView):
+class BookingCreateView(DealFlowRequiredMixin, generics.CreateAPIView):
     """
     Legacy POST /api/v1/bookings/create/.
     Creates a payment-pending deal and locks dates immediately.
@@ -159,14 +200,11 @@ class BookingCreateView(generics.CreateAPIView):
         end = serializer.validated_data['end_date']
 
         with transaction.atomic():
-            avail, _ = ItemAvailability.objects.select_for_update().get_or_create(item=item)
-            if not avail.is_available(start, end):
-                return Response(
-                    {'code': 'DATES_UNAVAILABLE', 'detail': 'Выбранные даты уже заняты. Попробуйте другие.'},
-                    status=status.HTTP_409_CONFLICT,
-                )
+            # Бронь сразу в pending_payment — занимает даты с момента создания.
+            lock_item(item.pk)
+            if not is_range_free(item, start, end):
+                return dates_unavailable_response()
             booking = serializer.save()
-            avail.block_range(start, end)
 
         logger.info(
             'Booking #%s created: item=%s renter=%s dates=%s to %s total=%s',
@@ -180,7 +218,7 @@ class BookingCreateView(generics.CreateAPIView):
 
 
 @extend_schema(parameters=[ROLE_PARAMETER], responses={200: BookingListSerializer(many=True)})
-class MyDealsView(generics.ListAPIView):
+class MyDealsView(DealFlowRequiredMixin, generics.ListAPIView):
     """
     GET /api/v1/deals/list/?role=renter|owner
     """
@@ -202,7 +240,7 @@ class MyRentalsView(MyDealsView):
     """
 
 
-class DealDetailView(generics.RetrieveAPIView):
+class DealDetailView(DealFlowRequiredMixin, generics.RetrieveAPIView):
     """
     GET /api/v1/deals/{id}/
     """
@@ -229,19 +267,25 @@ class BookingDetailView(DealDetailView):
         403: DetailSerializer,
         404: DetailSerializer,
         409: DetailSerializer,
+        503: DetailSerializer,
     },
     summary='Выбрать способ оплаты сделки',
     description=(
-        'Тело: {"provider": "payme" | "click" | "cash"}. Блокирует даты в календаре и '
-        'переводит сделку в pending_payment.\n\n'
-        'payme и click возвращают redirect_url; сделка станет confirmed по вебхуку провайдера.\n'
-        'cash — расчёт при получении: redirect_url отсутствует, эскроу неприменим, '
-        'из ожидания сделку выводит владелец переходом в confirmed.\n\n'
+        'Тело: {"provider": "payme" | "click" | "cash"}. Занимает даты сделки (под '
+        'блокировкой объявления) и переводит её в pending_payment. Повторный вызов '
+        'для той же сделки разрешён — например, чтобы сменить способ оплаты.\n\n'
+        'payme и click зависят от PAYMENTS_MODE: live — redirect_url на чекаут '
+        'провайдера, сделка станет confirmed по вебхуку; stub (только dev/staging) — '
+        'оплата подтверждается сразу (status=paid, provider=stub), redirect_url ведёт '
+        'на страницу сделки; off — 503 PAYMENT_METHOD_UNAVAILABLE.\n'
+        'cash — расчёт при получении: redirect_url отсутствует, эскроу и залог через '
+        'платформу не идут, из ожидания сделку выводит владелец переходом в confirmed.\n\n'
         '403 — не пройден KYC. 400 — сделку в этом статусе оплатить нельзя. '
-        '409 — даты успели занять. 404 — сделки нет либо вызывающий не арендатор.'
+        '409 — даты успели занять. 404 — сделки нет либо вызывающий не арендатор. '
+        '503 — выбранный способ оплаты выключен.'
     ),
 )
-class DealPayView(APIView):
+class DealPayView(DealFlowRequiredMixin, APIView):
     permission_classes = [permissions.IsAuthenticated]
     throttle_scope = 'payments'
 
@@ -258,53 +302,75 @@ class DealPayView(APIView):
 
         serializer = DealPaySerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        provider = serializer.validated_data['provider']
+        provider_code = serializer.validated_data['provider']
 
-        with transaction.atomic():
-            try:
-                deal = Booking.objects.select_for_update().select_related('item', 'renter').get(pk=pk, renter=request.user)
-            except Booking.DoesNotExist:
-                return Response(
-                    {'code': 'DEAL_NOT_FOUND', 'detail': 'Сделка не найдена.'},
-                    status=status.HTTP_404_NOT_FOUND,
-                )
+        from apps.payments.models import Payment
+        from apps.payments.providers import PaymentsUnavailable, get_provider
 
-            if deal.status not in [Booking.STATUS_DRAFT, Booking.STATUS_PENDING_PAYMENT]:
-                if deal.status in self.ALREADY_PAID_STATUSES:
-                    code, detail = 'ALREADY_PAID', 'Эта сделка уже оплачена.'
-                else:
-                    code, detail = 'DEAL_CLOSED', f'Сделка в статусе {deal.public_status} больше не оплачивается.'
-                return Response({'code': code, 'detail': detail}, status=status.HTTP_400_BAD_REQUEST)
-
-            avail, _ = ItemAvailability.objects.select_for_update().get_or_create(item=deal.item)
-            if not avail.is_available(deal.start_date, deal.end_date):
-                return Response(
-                    {'code': 'DATES_UNAVAILABLE', 'detail': 'Выбранные даты уже заняты.'},
-                    status=status.HTTP_409_CONFLICT,
-                )
-
-            avail.block_range(deal.start_date, deal.end_date)
-            deal.status = Booking.STATUS_PENDING_PAYMENT
-            deal.escrow_status = Booking.ESCROW_PENDING
-            deal.save(update_fields=['status', 'escrow_status', 'updated_at'])
-
-            from apps.payments.models import Payment
-            from apps.payments.checkout import build_redirect_url
-
-            payment = Payment.objects.create(
-                booking=deal,
-                provider=provider,
-                amount=deal.total_price * 100,
-                status=Payment.STATUS_PENDING,
+        try:
+            provider = get_provider(provider_code)
+        except PaymentsUnavailable as exc:
+            return Response(
+                {'code': 'PAYMENT_METHOD_UNAVAILABLE', 'detail': str(exc)},
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
             )
-            if provider == Payment.PROVIDER_CASH:
-                # Наличными при получении: вести некуда, платформа денег не держит,
-                # поэтому эскроу к сделке неприменим с самого начала.
-                deal.escrow_status = Booking.ESCROW_NONE
-                deal.save(update_fields=['escrow_status', 'updated_at'])
-            else:
-                payment.payment_url = build_redirect_url(payment)
-                payment.save(update_fields=['payment_url'])
+
+        try:
+            with transaction.atomic():
+                try:
+                    deal = Booking.objects.select_related('item', 'renter').get(pk=pk, renter=request.user)
+                except Booking.DoesNotExist:
+                    return Response(
+                        {'code': 'DEAL_NOT_FOUND', 'detail': 'Сделка не найдена.'},
+                        status=status.HTTP_404_NOT_FOUND,
+                    )
+
+                # Блокировка объявления разводит две одновременные оплаты одних дат:
+                # вторая ждёт, пока первая не займёт даты, и видит их занятыми.
+                lock_item(deal.item_id)
+                deal = Booking.objects.select_for_update(of=('self',)).select_related('item', 'renter').get(pk=deal.pk)
+
+                if deal.status not in [Booking.STATUS_DRAFT, Booking.STATUS_PENDING_PAYMENT]:
+                    if deal.status in self.ALREADY_PAID_STATUSES:
+                        code, detail = 'ALREADY_PAID', 'Эта сделка уже оплачена.'
+                    else:
+                        code, detail = 'DEAL_CLOSED', f'Сделка в статусе {deal.public_status} больше не оплачивается.'
+                    return Response({'code': code, 'detail': detail}, status=status.HTTP_400_BAD_REQUEST)
+
+                # Свои же даты сделку не блокируют: повторный вызов (сменить способ
+                # оплаты, получить новую ссылку) раньше упирался в 409.
+                if not is_range_free(deal.item, deal.start_date, deal.end_date, exclude_booking=deal):
+                    return dates_unavailable_response()
+
+                deal.status = Booking.STATUS_PENDING_PAYMENT
+                if provider.online:
+                    deal.escrow_status = Booking.ESCROW_PENDING
+                    deal.deposit_status = Booking.DEPOSIT_PENDING if deal.deposit_amount > 0 else Booking.DEPOSIT_NONE
+                else:
+                    # Наличными при получении: платформа денег не держит — ни аренду,
+                    # ни залог, — поэтому эскроу и залог к сделке неприменимы.
+                    deal.escrow_status = Booking.ESCROW_NONE
+                    deal.deposit_status = Booking.DEPOSIT_NONE
+                deal.save(update_fields=['status', 'escrow_status', 'deposit_status', 'updated_at'])
+
+                # Повторная оплата: прежние незавершённые попытки больше не действуют.
+                deal.payments.filter(status=Payment.STATUS_PENDING).update(status=Payment.STATUS_FAILED)
+                payment = Payment.objects.create(
+                    booking=deal,
+                    provider=provider.code,
+                    amount=deal.total_price * 100,
+                    status=Payment.STATUS_PENDING,
+                )
+                payment.payment_url = provider.start(payment) or ''
+                payment.save(update_fields=['payment_url', 'updated_at'])
+                payment.refresh_from_db(fields=['status'])
+        except PaymentsUnavailable as exc:
+            # Режим оплаты сменился между выбором провайдера и подтверждением —
+            # транзакция откатана, сделка осталась как была.
+            return Response(
+                {'code': 'PAYMENT_METHOD_UNAVAILABLE', 'detail': str(exc)},
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
 
         from apps.users.tasks import charge_kyc_first_deal_cost
         charge_kyc_first_deal_cost.delay(request.user.pk, deal.pk)
@@ -332,7 +398,7 @@ class DealPayView(APIView):
         'В ответе полная карточка сделки.'
     ),
 )
-class ConfirmReturnView(APIView):
+class ConfirmReturnView(DealFlowRequiredMixin, APIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def post(self, request, pk):
@@ -358,7 +424,7 @@ class ConfirmReturnView(APIView):
         return Response(BookingDetailSerializer(deal, context={'request': request}).data)
 
 
-class DisputeView(APIView):
+class DisputeView(DealFlowRequiredMixin, APIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def post(self, request, pk):
@@ -383,6 +449,43 @@ class DisputeView(APIView):
 
 
 @extend_schema(
+    request=DisputeResolutionSerializer,
+    responses={200: BookingDetailSerializer, 400: DetailSerializer, 404: DetailSerializer},
+    summary='Закрыть спор (сотрудник)',
+    description=(
+        'Только is_staff. Тело: {"deposit_withheld": <сум>, "comment": "..."}. Сделка '
+        'из disputed переходит в completed: аренда (за вычетом комиссии) — владельцу, '
+        'deposit_withheld из залога — тоже владельцу, остаток залога — арендатору. '
+        'Начисления идут во внутренние кошельки, история — в deposit_operations.\n\n'
+        '400 — сделка не в споре либо deposit_withheld больше залога.'
+    ),
+)
+class DisputeResolveView(DealFlowRequiredMixin, APIView):
+    permission_classes = [permissions.IsAdminUser]
+
+    def post(self, request, pk):
+        from .settlement import SettlementError, resolve_dispute
+
+        if not Booking.objects.filter(pk=pk).exists():
+            return Response({'code': 'deal_not_found', 'detail': 'Сделка не найдена.'}, status=status.HTTP_404_NOT_FOUND)
+        serializer = DisputeResolutionSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        try:
+            booking = resolve_dispute(
+                pk,
+                serializer.validated_data['deposit_withheld'],
+                actor=request.user,
+                comment=serializer.validated_data.get('comment', ''),
+            )
+        except SettlementError as exc:
+            return Response({'code': 'dispute_resolution_invalid', 'detail': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+
+        from apps.bookings.tasks import notify_status_change
+        notify_status_change.delay(booking.pk, request.user.pk)
+        return Response(BookingDetailSerializer(booking, context={'request': request}).data)
+
+
+@extend_schema(
     request=DealReviewSerializer,
     responses={
         201: DealReviewSerializer,
@@ -400,7 +503,7 @@ class DisputeView(APIView):
         '404 — сделки нет.'
     ),
 )
-class DealReviewView(APIView):
+class DealReviewView(DealFlowRequiredMixin, APIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def post(self, request, pk):
@@ -452,7 +555,7 @@ class DealReviewView(APIView):
         '404 — сделки нет.'
     ),
 )
-class BookingPhotoUploadView(APIView):
+class BookingPhotoUploadView(DealFlowRequiredMixin, APIView):
     permission_classes = [permissions.IsAuthenticated]
     parser_classes = [MultiPartParser, FormParser]
 
@@ -511,9 +614,9 @@ class BookingPhotoUploadView(APIView):
         '(draft, pending_payment, paid, in_progress, ...) — публичные предпочтительны.\n\n'
         'Разрешённые переходы (из статуса + кем):\n'
         '- draft, pending_payment → cancelled: арендатор или владелец\n'
-        '- pending_payment → paid (confirmed): только владелец — так бронь с расчётом '
-        'наличными выходит из ожидания. У payme и click это делает вебхук провайдера, '
-        'и вручную такой переход не нужен.\n'
+        '- pending_payment → paid (confirmed): только владелец и только при оплате '
+        'наличными (последний выбранный способ — cash). Онлайн-оплату подтверждает '
+        'провайдер; попытка владельца подтвердить её вручную — 400.\n'
         '- paid (confirmed) → in_progress (active): арендатор или владелец\n'
         '- paid (confirmed) → cancelled: арендатор\n'
         '- in_progress (active) → returned: только арендатор\n'
@@ -526,7 +629,7 @@ class BookingPhotoUploadView(APIView):
         'в ошибках поля status.'
     ),
 )
-class BookingStatusUpdateView(APIView):
+class BookingStatusUpdateView(DealFlowRequiredMixin, APIView):
     """
     PATCH /api/v1/deals/{id}/status/ and legacy /bookings/{id}/status/.
     """
@@ -560,7 +663,9 @@ class BookingStatusUpdateView(APIView):
                 self._confirm_without_provider(booking)
             elif new_status == Booking.STATUS_COMPLETED:
                 from apps.bookings.tasks import release_escrow
-                release_escrow.delay(booking.pk)
+                # После коммита: задача должна увидеть сделку уже completed.
+                booking_id = booking.pk
+                transaction.on_commit(lambda: release_escrow.delay(booking_id))
 
         from apps.bookings.tasks import notify_status_change
         notify_status_change.delay(booking.pk, request.user.pk)
@@ -584,12 +689,9 @@ class BookingStatusUpdateView(APIView):
         logger.info('Booking #%s confirmed by owner without provider payment', booking.pk)
 
     def _handle_cancellation(self, booking):
-        try:
-            avail = ItemAvailability.objects.select_for_update().get(item=booking.item)
-            avail.unblock_range(booking.start_date, booking.end_date)
-        except ItemAvailability.DoesNotExist:
-            pass
-
+        # Даты освобождать не нужно: их занимает сама бронь, пока она активна,
+        # — отмена освобождает ровно её дни и ничьи больше.
+        from apps.bookings.settlement import refund_deposit_on_cancel
         from apps.payments.models import Payment, Transaction
 
         # Наличные платформа не принимала — возвращать нечего, иначе в отчётности
@@ -611,6 +713,7 @@ class BookingStatusUpdateView(APIView):
             )
         booking.escrow_status = Booking.ESCROW_NONE if cash_only else Booking.ESCROW_REFUNDED
         booking.save(update_fields=['escrow_status', 'updated_at'])
+        refund_deposit_on_cancel(booking, 'Сделка отменена', actor=self.request.user)
         logger.info('Booking #%s cancelled (cash_only=%s)', booking.pk, cash_only)
 
 

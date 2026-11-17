@@ -6,11 +6,15 @@ class Payment(models.Model):
     PROVIDER_PAYME = 'payme'
     PROVIDER_CLICK = 'click'
     PROVIDER_CASH = 'cash'
+    # Заглушка онлайн-оплаты (PAYMENTS_MODE=stub, только dev/staging): денег не
+    # было, отдельный провайдер — чтобы такие платежи не путались с настоящими.
+    PROVIDER_STUB = 'stub'
 
     PROVIDER_CHOICES = [
         (PROVIDER_PAYME, 'Payme'),
         (PROVIDER_CLICK, 'Click'),
         (PROVIDER_CASH, 'Наличными при получении'),
+        (PROVIDER_STUB, 'Заглушка (тест)'),
     ]
 
     STATUS_PENDING = 'pending'
@@ -80,3 +84,54 @@ class Transaction(models.Model):
 
     def __str__(self):
         return f'{self.type} {self.amount} {self.currency}'
+
+
+class WalletTransaction(models.Model):
+    """
+    Движение по внутреннему кошельку (Profile.wallet_balance). Баланс меняется
+    только через apps.payments.wallet.credit_wallet, который пишет и эту строку:
+    у каждого изменения баланса есть тип, сделка и время.
+    """
+    TYPE_RENT_PAYOUT = 'rent_payout'
+    TYPE_DEPOSIT_REFUND = 'deposit_refund'
+    TYPE_DEPOSIT_COMPENSATION = 'deposit_compensation'
+    TYPE_ADJUSTMENT = 'adjustment'
+
+    TYPE_CHOICES = [
+        (TYPE_RENT_PAYOUT, 'Выплата за аренду'),
+        (TYPE_DEPOSIT_REFUND, 'Возврат залога'),
+        (TYPE_DEPOSIT_COMPENSATION, 'Удержанный залог в пользу владельца'),
+        (TYPE_ADJUSTMENT, 'Ручная корректировка'),
+    ]
+
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.PROTECT,
+        related_name='wallet_transactions', verbose_name='Пользователь',
+    )
+    type = models.CharField('Тип', max_length=30, choices=TYPE_CHOICES)
+    amount = models.DecimalField('Сумма (сум)', max_digits=14, decimal_places=0)
+    balance_after = models.DecimalField('Баланс после (сум)', max_digits=14, decimal_places=0)
+    booking = models.ForeignKey(
+        'bookings.Booking', on_delete=models.PROTECT, null=True, blank=True,
+        related_name='wallet_transactions', verbose_name='Сделка',
+    )
+    comment = models.CharField('Комментарий', max_length=300, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        verbose_name = 'Операция кошелька'
+        verbose_name_plural = 'Операции кошелька'
+        ordering = ['-created_at']
+        constraints = [
+            # Один и тот же вид начисления по одной сделке одному человеку — один
+            # раз. Защита от двойной выплаты на уровне БД, если два release_escrow
+            # всё-таки разминутся с блокировками.
+            models.UniqueConstraint(
+                fields=['booking', 'type', 'user'],
+                condition=models.Q(booking__isnull=False),
+                name='wallet_tx_once_per_booking',
+            ),
+        ]
+
+    def __str__(self):
+        return f'{self.get_type_display()} {self.amount} → {self.user_id}'

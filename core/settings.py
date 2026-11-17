@@ -10,6 +10,11 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 
 SECRET_KEY = config('SECRET_KEY', default='django-insecure-change-me-in-production')
 DEBUG = config('DEBUG', default=False, cast=bool)
+
+# Где запущен сервер: dev | staging | prod. От этого зависят заглушки оплаты и
+# MyID (см. core/runtime_modes.py): в prod они запрещены и роняют старт.
+# Без явного значения: DEBUG=True — dev, иначе prod (безопасное умолчание).
+APP_ENV = config('APP_ENV', default='dev' if DEBUG else 'prod')
 ALLOWED_HOSTS = config('ALLOWED_HOSTS', default='localhost,127.0.0.1,169.58.192.146,back.rentoo.uz').split(',')
 
 # Для POST с формы (вход в /admin/) Django сверяет заголовок Origin со схемой и хостом
@@ -84,6 +89,8 @@ INSTALLED_APPS = [
     'apps.chat',
     'apps.notifications',
     'apps.monitoring',
+    'apps.billing',
+    'apps.crm',
 ]
 
 MIDDLEWARE = [
@@ -169,6 +176,11 @@ REST_FRAMEWORK = {
         'payments': '20/min',
         'kyc': '10/min',
         'analytics': '120/min',
+        # «Показать номер» (решение 16.11.2026): 30 в час и 100 в сутки на
+        # пользователя — живому человеку с запасом, сбор номеров скриптом упирается.
+        'phone_reveal_hour': config('THROTTLE_RATE_PHONE_REVEAL_HOUR', default='30/hour'),
+        'phone_reveal_day': config('THROTTLE_RATE_PHONE_REVEAL_DAY', default='100/day'),
+        'report': '20/hour',
     },
     # Exactly one reverse proxy (nginx) sits in front of Django here. Without
     # this, SimpleRateThrottle.get_ident() falls back to hashing the raw
@@ -198,6 +210,8 @@ SIMPLE_JWT = {
     # одновременно, поэтому JWT переехал на свой заголовок: X-Auth-Token.
     'AUTH_HEADER_NAME': 'HTTP_X_AUTH_TOKEN',
     'SIGNING_KEY': config('JWT_SIGNING_KEY', default=SECRET_KEY),
+    # Обновление токена отказывает заблокированному пользователю (стандартный — нет).
+    'TOKEN_REFRESH_SERIALIZER': 'apps.users.serializers.ActiveUserTokenRefreshSerializer',
 }
 
 # ─── CORS ─────────────────────────────────────────────────────────────────────
@@ -259,6 +273,20 @@ CELERY_BEAT_SCHEDULE = {
     'expire-stale-bookings-hourly': {
         'task': 'apps.bookings.tasks.expire_stale_bookings',
         'schedule': crontab(minute=15),
+    },
+    # Тарифы: окончание (переход на FREE) — каждый час, напоминания — утром.
+    'expire-subscriptions-hourly': {
+        'task': 'apps.billing.tasks.expire_subscriptions',
+        'schedule': crontab(minute=5),
+    },
+    # Кабинет владельца: напоминания о выдаче и возврате на сегодня.
+    'remind-reservations-daily': {
+        'task': 'apps.crm.tasks.remind_reservations',
+        'schedule': crontab(hour=8, minute=0),
+    },
+    'remind-subscriptions-daily': {
+        'task': 'apps.billing.tasks.remind_subscriptions',
+        'schedule': crontab(hour=10, minute=0),
     },
 }
 
@@ -343,6 +371,10 @@ SMS_REQUEST_TIMEOUT_SECONDS = config('SMS_REQUEST_TIMEOUT_SECONDS', default=10, 
 # False — сделки и оплата не требуют верификации, KYC-эндпоинты не зарегистрированы,
 # учётные расходы на KYC не пишутся. Данные ранее загруженных документов не удаляются.
 KYC_ENABLED = config('KYC_ENABLED', default=False, cast=bool)
+# Проверка личности через MyID: off — выключено, stub — заглушка, которая сразу
+# помечает профиль проверенным (только dev/staging, в prod старт падает).
+# Настоящей интеграции с MyID пока нет — значение live не принимается.
+MYID_MODE = config('MYID_MODE', default='off')
 KYC_FIRST_DEAL_COST = config('KYC_FIRST_DEAL_COST', default=8000, cast=int)
 # face_recognition distance threshold: чем меньше — тем строже сверка лица с документом (0..1)
 KYC_FACE_MATCH_DISTANCE = config('KYC_FACE_MATCH_DISTANCE', default=0.5, cast=float)
@@ -359,6 +391,17 @@ CHAT_MAX_OPEN_INQUIRIES = config('CHAT_MAX_OPEN_INQUIRIES', default=20, cast=int
 
 
 # ─── Payment Providers ────────────────────────────────────────────────────────
+
+# Режим онлайн-оплаты (Click/Payme), см. apps/payments/providers.py:
+#   off  — онлайн-оплата недоступна, работают только наличные; вебхуки отвечают 404;
+#   stub — заглушка: оплата подтверждается сразу, без денег. Только dev/staging,
+#          в prod сервер не стартует;
+#   live — настоящие Click/Payme и их вебхуки.
+# Умолчание — stub там, где заглушка разрешена, иначе off.
+PAYMENTS_MODE = config(
+    'PAYMENTS_MODE',
+    default='stub' if APP_ENV == 'staging' or (APP_ENV == 'dev' and DEBUG) else 'off',
+)
 
 PAYME_MERCHANT_ID = config('PAYME_MERCHANT_ID', default='')
 PAYME_SECRET_KEY = config('PAYME_SECRET_KEY', default='')
@@ -383,12 +426,41 @@ BOOKING_ABANDON_TIMEOUT_HOURS = config('BOOKING_ABANDON_TIMEOUT_HOURS', default=
 # живёт на сервере, а не только в интерфейсе.
 BOOKING_REQUIRE_HANDOVER_PHOTO = config('BOOKING_REQUIRE_HANDOVER_PHOTO', default=True, cast=bool)
 
+# Самая длинная аренда в днях. Занятость считается по диапазонам броней, и без
+# предела одна заявка на «0001–9999» раздувала бы календарь на миллионы дат.
+BOOKING_MAX_DAYS = config('BOOKING_MAX_DAYS', default=365, cast=int)
+
+# Сделка через платформу (оформление, оплата, эскроу, залог, кошелёк, споры, торг,
+# комиссия). С 16.11.2026 Rentoo — доска объявлений с платными тарифами, сделка
+# выключена, но не удалена: см. core/feature_flags.py.
+DEAL_FLOW_ENABLED = config('DEAL_FLOW_ENABLED', default=False, cast=bool)
+
 # Platform commission (%)
-PLATFORM_COMMISSION_PERCENT = config('PLATFORM_COMMISSION_PERCENT', default=10, cast=int)
+# Комиссия платформы, %. Модель B: удерживается из выплаты владельцу, арендатор
+# платит цену владельца без надбавки (решение 27.10.2026 — 15 %).
+PLATFORM_COMMISSION_PERCENT = config('PLATFORM_COMMISSION_PERCENT', default=15, cast=int)
+
+# Лимит объявлений в работе (на модерации + опубликовано) задаёт тариф
+# (apps.billing): FREE 10, START 100, BUSINESS 300, PRO без лимита.
+# Сколько дней даёт одна оплата тарифа («месяц»).
+BILLING_PERIOD_DAYS = config('BILLING_PERIOD_DAYS', default=30, cast=int)
+# Платное продвижение объявления (решение 16.11.2026): цена в сумах и срок в днях.
+PROMO_TOP_PRICE = config('PROMO_TOP_PRICE', default=30000, cast=int)
+PROMO_TOP_DAYS = config('PROMO_TOP_DAYS', default=7, cast=int)
+PROMO_VIP_PRICE = config('PROMO_VIP_PRICE', default=80000, cast=int)
+PROMO_VIP_DAYS = config('PROMO_VIP_DAYS', default=30, cast=int)
+# Кабинет владельца (CRM, тарифы) — отдельный фронт. Отсюда ссылки в
+# уведомлениях о тарифе и адрес возврата после оплаты заказа.
+OWNER_FRONTEND_BASE_URL = config('OWNER_FRONTEND_BASE_URL', default='https://owner.rentoo.uz')
+BILLING_RETURN_URL_TEMPLATE = config(
+    'BILLING_RETURN_URL_TEMPLATE', default='https://owner.rentoo.uz/billing/orders/{id}',
+)
 
 # OTP settings
 OTP_EXPIRY_SECONDS = config('OTP_EXPIRY_SECONDS', default=120, cast=int)
 OTP_RESEND_COOLDOWN_SECONDS = config('OTP_RESEND_COOLDOWN_SECONDS', default=60, cast=int)
+# Сколько неверных вводов выдерживает код, прежде чем погаснуть.
+OTP_MAX_ATTEMPTS = config('OTP_MAX_ATTEMPTS', default=5, cast=int)
 
 # ─── Telegram OTP-бот (временная замена SMS) ──────────────────────────────────
 
@@ -415,6 +487,14 @@ VAPID_PUBLIC_KEY = config('VAPID_PUBLIC_KEY', default='')
 # "sub" в JWT VAPID-заголовка — по спецификации обязателен, провайдеры (FCM и
 # т.п.) используют его, чтобы связаться с отправителем при проблемах.
 VAPID_CLAIM_EMAIL = config('VAPID_CLAIM_EMAIL', default='mailto:admin@rentoo.uz')
+# Куда сервер вправе слать Web Push: домены push-сервисов браузеров (и их
+# поддомены). Остальные endpoint-ы подписки отклоняются — защита от SSRF.
+WEB_PUSH_ALLOWED_HOSTS = [
+    host.strip().lower() for host in config(
+        'WEB_PUSH_ALLOWED_HOSTS',
+        default='fcm.googleapis.com,updates.push.services.mozilla.com,push.apple.com,notify.windows.com',
+    ).split(',') if host.strip()
+]
 
 # ─── Swagger/Redoc ────────────────────────────────────────────────────────────
 

@@ -19,13 +19,26 @@ from ..serializers import (
     PhoneChangeSendSerializer,
     PhoneChangeVerifySerializer,
 )
-from ..otp import generate_otp, send_otp, telegram_deep_link, telegram_link_required
+from ..otp import check_code, generate_otp, send_otp, telegram_deep_link, telegram_link_required
 from ..telegram_webapp import link_for, verify_init_data
 from apps.monitoring import events
 from apps.monitoring.models import AuthEvent
 from rest_framework.exceptions import ValidationError
 
 logger = logging.getLogger(__name__)
+
+
+def wrong_code_response(remaining):
+    """400 на неверный код; otp_attempts_exceeded — живых кодов не осталось, нужен новый."""
+    if remaining:
+        return Response(
+            {'code': 'otp_invalid', 'detail': 'Неверный или устаревший код.'},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+    return Response(
+        {'code': 'otp_attempts_exceeded', 'detail': 'Код больше не действует. Запросите новый.'},
+        status=status.HTTP_400_BAD_REQUEST,
+    )
 
 
 class SendOTPView(APIView):
@@ -115,26 +128,28 @@ class VerifyOTPView(APIView):
         code = serializer.validated_data['code']
 
         expiry = timezone.now() - timedelta(seconds=settings.OTP_EXPIRY_SECONDS)
-        otp = OTPCode.objects.filter(
-            phone=phone,
-            code=code,
-            is_used=False,
-            created_at__gte=expiry,
-        ).order_by('-created_at').first()
+        otp, remaining = check_code(
+            OTPCode.objects.filter(phone=phone, is_used=False, created_at__gte=expiry), code,
+        )
 
         if not otp:
             events.record(request, AuthEvent.VERIFY_FAILED, phone=phone)
-            return Response(
-                {'detail': 'Неверный или устаревший код.'},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+            return wrong_code_response(remaining)
 
-        otp.is_used = True
-        otp.save(update_fields=['is_used'])
+        existing = CustomUser.objects.filter(phone=phone).first()
+        if existing is not None and not existing.is_active:
+            # Проверяется после верного кода: подбирающему код незачем знать,
+            # что аккаунт заблокирован.
+            events.record(request, AuthEvent.VERIFY_FAILED, phone=phone, detail='user_blocked')
+            return Response(
+                {'code': 'user_blocked', 'detail': 'Аккаунт заблокирован. Обратитесь в поддержку.'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
 
         user, is_new = CustomUser.objects.get_or_create(phone=phone)
         if is_new:
-            Profile.objects.create(user=user)
+            # Профиль обычно уже создал сигнал post_save — get_or_create, а не create.
+            Profile.objects.get_or_create(user=user)
             logger.info('New user registered: %s', phone)
 
         events.record(request, AuthEvent.REGISTER_OK if is_new else AuthEvent.LOGIN_OK, phone=phone)
@@ -235,7 +250,8 @@ class TelegramWebAppLoginView(APIView):
 
         user, is_new = CustomUser.objects.get_or_create(phone=link.phone)
         if is_new:
-            Profile.objects.create(user=user)
+            # The post_save signal normally made it already.
+            Profile.objects.get_or_create(user=user)
             logger.info('New user registered via Telegram Mini App: %s', link.phone)
         if not user.is_active:
             return Response(
@@ -329,21 +345,18 @@ class PhoneChangeVerifyView(APIView):
         code = serializer.validated_data['code']
 
         expiry = timezone.now() - timedelta(seconds=settings.OTP_EXPIRY_SECONDS)
-        change = PhoneChangeRequest.objects.filter(
-            user=request.user,
-            new_phone=new_phone,
-            code=code,
-            is_used=False,
-            created_at__gte=expiry,
-        ).first()
+        change, remaining = check_code(
+            PhoneChangeRequest.objects.filter(
+                user=request.user, new_phone=new_phone, is_used=False, created_at__gte=expiry,
+            ),
+            code,
+        )
         if not change:
-            return Response({'detail': 'Неверный или устаревший код.'}, status=status.HTTP_400_BAD_REQUEST)
+            return wrong_code_response(remaining)
 
         if CustomUser.objects.filter(phone=new_phone).exclude(pk=request.user.pk).exists():
-            return Response({'detail': 'Этот номер уже занят.'}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({'code': 'phone_taken', 'detail': 'Этот номер уже занят.'}, status=status.HTTP_400_BAD_REQUEST)
 
         request.user.phone = new_phone
         request.user.save(update_fields=['phone'])
-        change.is_used = True
-        change.save(update_fields=['is_used'])
         return Response({'detail': 'Номер телефона обновлён.', 'phone': new_phone})

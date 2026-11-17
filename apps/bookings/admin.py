@@ -1,5 +1,5 @@
 from django.contrib import admin
-from .models import Booking, BookingPhoto, DealReview
+from .models import Booking, BookingPhoto, DealReview, DepositOperation
 from apps.payments.models import Payment
 
 
@@ -18,18 +18,31 @@ class BookingPhotoInline(admin.TabularInline):
     raw_id_fields = ['uploaded_by']
 
 
+class DepositOperationInline(admin.TabularInline):
+    model = DepositOperation
+    extra = 0
+    fields = ['type', 'amount', 'actor', 'comment', 'created_at']
+    readonly_fields = fields
+    can_delete = False
+
+    def has_add_permission(self, request, obj=None):
+        # Залог двигает только расчёт сделки (apps.bookings.settlement) —
+        # ручная строка разошлась бы с кошельками.
+        return False
+
+
 @admin.register(Booking)
 class BookingAdmin(admin.ModelAdmin):
-    list_display = ['id', 'item', 'renter', 'start_date', 'end_date', 'total_price', 'status', 'escrow_status', 'created_at']
-    list_filter = ['status', 'escrow_status']
+    list_display = ['id', 'item', 'renter', 'start_date', 'end_date', 'total_price', 'status', 'escrow_status', 'deposit_status', 'created_at']
+    list_filter = ['status', 'escrow_status', 'deposit_status']
     search_fields = ['item__title', 'renter__phone']
     raw_id_fields = ['item', 'renter']
-    readonly_fields = ['price_per_day', 'deposit_amount', 'commission_amount', 'total_price', 'created_at', 'updated_at']
-    inlines = [PaymentInline, BookingPhotoInline]
+    readonly_fields = ['price_per_day', 'deposit_amount', 'deposit_status', 'commission_amount', 'total_price', 'created_at', 'updated_at']
+    inlines = [PaymentInline, DepositOperationInline, BookingPhotoInline]
     fieldsets = (
         ('Сделка', {'fields': ('item', 'renter', 'status', 'escrow_status', 'renter_comment', 'dispute_reason')}),
         ('Даты', {'fields': ('start_date', 'end_date')}),
-        ('Финансы', {'fields': ('price_per_day', 'deposit_amount', 'commission_amount', 'total_price', 'escrow_amount')}),
+        ('Финансы', {'fields': ('price_per_day', 'deposit_amount', 'deposit_status', 'commission_amount', 'total_price', 'escrow_amount')}),
         ('Системное', {'fields': ('created_at', 'updated_at')}),
     )
 

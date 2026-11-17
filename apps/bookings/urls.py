@@ -11,15 +11,18 @@ from .views import (
     DealPayView,
     DealPreviewView,
     DealReviewView,
+    DisputeResolveView,
     DisputeView,
     MyDealsView,
     MyReviewsView,
+    PayoutPreviewView,
     UserReviewsView,
 )
 
 urlpatterns = [
     path('deals/', DealCreateView.as_view(), name='deal-create'),
     path('deals/preview/', DealPreviewView.as_view(), name='deal-preview'),
+    path('pricing/payout/', PayoutPreviewView.as_view(), name='pricing-payout'),
     path('deals/list/', MyDealsView.as_view(), name='deal-list'),
     path('deals/<int:pk>/', DealDetailView.as_view(), name='deal-detail'),
     path('deals/<int:pk>/pay/', DealPayView.as_view(), name='deal-pay'),
@@ -27,6 +30,7 @@ urlpatterns = [
     path('deals/<int:pk>/photos/', BookingPhotoUploadView.as_view(), name='deal-photo-upload'),
     path('deals/<int:pk>/confirm-return/', ConfirmReturnView.as_view(), name='deal-confirm-return'),
     path('deals/<int:pk>/dispute/', DisputeView.as_view(), name='deal-dispute'),
+    path('deals/<int:pk>/resolve-dispute/', DisputeResolveView.as_view(), name='deal-resolve-dispute'),
     path('deals/<int:pk>/status/', BookingStatusUpdateView.as_view(), name='deal-status'),
 
     path('bookings/create/', BookingCreateView.as_view(), name='booking-create'),

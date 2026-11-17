@@ -70,7 +70,10 @@ class AdminDashboardView(APIView):
         now = timezone.now()
         month_ago = now - timedelta(days=30)
 
-        paid_payments = Payment.objects.filter(status__in=[Payment.STATUS_PAID, Payment.STATUS_COMPLETED])
+        # Платежи заглушки (PAYMENTS_MODE=stub) — без денег, в оборот не входят.
+        paid_payments = Payment.objects.filter(
+            status__in=[Payment.STATUS_PAID, Payment.STATUS_COMPLETED],
+        ).exclude(provider=Payment.PROVIDER_STUB)
         gmv = paid_payments.aggregate(total=Sum('amount'))['total'] or 0
 
         total_users = CustomUser.objects.count()
@@ -129,6 +132,14 @@ class AdminDashboardView(APIView):
         })
 
 
+def revoke_refresh_tokens(user):
+    """Гасит все невыгоревшие refresh-токены пользователя (blacklist SimpleJWT)."""
+    from rest_framework_simplejwt.token_blacklist.models import BlacklistedToken, OutstandingToken
+
+    for token in OutstandingToken.objects.filter(user=user, expires_at__gt=timezone.now()):
+        BlacklistedToken.objects.get_or_create(token=token)
+
+
 class AdminUserStatusSerializer(serializers.Serializer):
     status = serializers.ChoiceField(choices=['active', 'blocked'])
 
@@ -139,8 +150,9 @@ class AdminUserStatusSerializer(serializers.Serializer):
     summary='Заблокировать/разблокировать пользователя',
     description=(
         'Тело: {"status": "active" | "blocked"}. Переключает CustomUser.is_active — '
-        'заблокированный пользователь не может авторизоваться (OTP-логин отклоняется), '
-        'уже выданные токены не отзываются отдельно. Только для is_staff; заблокировать '
+        'заблокированный пользователь не может войти (OTP-логин — 403 user_blocked), '
+        'его refresh-токены отзываются, а уже выданные access-токены и WebSocket '
+        'перестают приниматься сразу. Только для is_staff; заблокировать '
         'самого себя нельзя (400).'
     ),
 )
@@ -164,6 +176,8 @@ class AdminUserBlockView(APIView):
         serializer.is_valid(raise_exception=True)
         user.is_active = serializer.validated_data['status'] == 'active'
         user.save(update_fields=['is_active'])
+        if not user.is_active:
+            revoke_refresh_tokens(user)
 
         return Response({
             'id': user.id,

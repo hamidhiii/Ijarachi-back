@@ -49,8 +49,10 @@ services:
     command: gunicorn core.asgi:application -k uvicorn.workers.UvicornWorker --bind 0.0.0.0:8000 --workers 2 --timeout 120
     volumes:
       - .:/app
+    # Только localhost: снаружи — через nginx. Открытый 0.0.0.0:8000 обходил
+    # Basic Auth nginx и давал подделать X-Forwarded-For (NUM_PROXIES=1).
     ports:
-      - "8000:8000"
+      - "127.0.0.1:8000:8000"
     env_file:
       - .env
     environment:

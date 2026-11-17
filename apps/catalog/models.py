@@ -1,5 +1,6 @@
-from django.db import models
 from django.conf import settings
+from django.core.validators import MinValueValidator
+from django.db import models
 from django.utils.text import slugify
 from mptt.models import MPTTModel, TreeForeignKey
 
@@ -45,6 +46,8 @@ class Item(models.Model):
     STATUS_PENDING = 'pending'
     STATUS_REJECTED = 'rejected'
     STATUS_INACTIVE = 'inactive'
+    # Скрыто модератором (жалоба, нарушение): владелец сам вернуть не может.
+    STATUS_BLOCKED = 'blocked'
     STATUS_ACTIVE = STATUS_APPROVED
     STATUS_MODERATION = STATUS_PENDING
 
@@ -53,6 +56,7 @@ class Item(models.Model):
         (STATUS_PENDING, 'На модерации'),
         (STATUS_REJECTED, 'Отклонено'),
         (STATUS_INACTIVE, 'Неактивно'),
+        (STATUS_BLOCKED, 'Скрыто модератором'),
     ]
 
     CONDITION_NEW = 'new'
@@ -90,6 +94,22 @@ class Item(models.Model):
     view_count = models.PositiveIntegerField(default=0)
     favorite_count = models.PositiveIntegerField(default=0)
     min_rental_days = models.PositiveIntegerField(default=1)
+    # Объявление описывает модель вещи, а не один экземпляр: у проката может
+    # быть 40 одинаковых стульев. Свободный остаток на дату — quantity минус
+    # забронированное (apps.crm).
+    quantity = models.PositiveIntegerField('Количество', default=1, validators=[MinValueValidator(1)])
+    # Снято при окончании тарифа (сверх лимита FREE): статус, в который вернуть
+    # объявление, когда тариф снова оплачен. Пусто — не снималось по тарифу.
+    plan_paused_status = models.CharField('Снято по тарифу (вернуть в статус)', max_length=20, blank=True)
+    # Платное продвижение (apps.billing): действует, пока дата в будущем.
+    # Порядок выдачи — apps.catalog.ranking.
+    # Точка проката (тариф PRO, apps.crm.Branch); пусто — без привязки.
+    branch = models.ForeignKey(
+        'crm.Branch', on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='items', verbose_name='Точка',
+    )
+    top_until = models.DateTimeField('В топе до', null=True, blank=True, db_index=True)
+    vip_until = models.DateTimeField('VIP до', null=True, blank=True, db_index=True)
     # «Торг»: владелец готов обсуждать цену. Показывается рядом с ценой в
     # каталоге и на карточке — это заявление о числе, а не статус модерации.
     # Умолчание False: объявление, размещённое до появления поля, не должно
@@ -148,9 +168,12 @@ class ItemImage(models.Model):
 
 
 class ItemAvailability(models.Model):
-    """Stores blocked dates for an item (as a list of ISO date strings)."""
+    """
+    Дни, которые владелец закрыл вручную (ISO-строки). Брони сюда больше не
+    пишутся: их даты считаются по самим броням, см. apps.bookings.availability.
+    """
     item = models.OneToOneField(Item, on_delete=models.CASCADE, related_name='availability')
-    blocked_dates = models.JSONField('Заблокированные даты', default=list)
+    blocked_dates = models.JSONField('Закрыто владельцем', default=list)
 
     class Meta:
         verbose_name = 'Доступность'
@@ -158,39 +181,6 @@ class ItemAvailability(models.Model):
 
     def __str__(self):
         return f'Доступность: {self.item.title}'
-
-    def is_available(self, start_date, end_date) -> bool:
-        """Check if item is available for the given date range."""
-        from datetime import date, timedelta
-        blocked = set(self.blocked_dates)
-        current = start_date
-        while current <= end_date:
-            if current.isoformat() in blocked:
-                return False
-            current += timedelta(days=1)
-        return True
-
-    def block_range(self, start_date, end_date):
-        """Add dates from range to blocked list."""
-        from datetime import timedelta
-        blocked = set(self.blocked_dates)
-        current = start_date
-        while current <= end_date:
-            blocked.add(current.isoformat())
-            current += timedelta(days=1)
-        self.blocked_dates = sorted(blocked)
-        self.save(update_fields=['blocked_dates'])
-
-    def unblock_range(self, start_date, end_date):
-        """Remove dates from blocked list."""
-        from datetime import timedelta
-        blocked = set(self.blocked_dates)
-        current = start_date
-        while current <= end_date:
-            blocked.discard(current.isoformat())
-            current += timedelta(days=1)
-        self.blocked_dates = sorted(blocked)
-        self.save(update_fields=['blocked_dates'])
 
 
 class Favorite(models.Model):
@@ -259,3 +249,128 @@ class Offer(models.Model):
 
     def __str__(self):
         return f'{self.item_id} · {self.renter_id} · {self.amount} ({self.status})'
+
+    @classmethod
+    def accepted_for(cls, item, renter):
+        """
+        Согласованная цена пары (объявление, арендатор): последняя строка ветки,
+        если она принята. Новое предложение после принятия открывает торг заново,
+        и до ответа действует цена из объявления.
+        """
+        latest = cls.objects.filter(item=item, renter=renter).order_by('-created_at', '-pk').first()
+        return latest if latest is not None and latest.status == cls.STATUS_ACCEPTED else None
+
+
+class PhoneReveal(models.Model):
+    """
+    Нажатие «Показать номер» (решение 16.11.2026): каждое нажатие — строка.
+    В статистику идут только `counted`: первое нажатие пользователя по
+    объявлению за 24 часа; нажатия владельца по своему объявлению не считаются.
+    """
+    item = models.ForeignKey(Item, on_delete=models.CASCADE, related_name='phone_reveals', verbose_name='Объявление')
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.CASCADE,
+        related_name='phone_reveals', verbose_name='Пользователь',
+    )
+    counted = models.BooleanField('Учитывается в статистике', default=True)
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+
+    class Meta:
+        verbose_name = 'Показ номера'
+        verbose_name_plural = 'Показы номера'
+        ordering = ['-created_at']
+        indexes = [models.Index(fields=['item', 'user', '-created_at'])]
+
+    def __str__(self):
+        return f'{self.user_id} → {self.item_id} {self.created_at:%d.%m.%Y %H:%M}'
+
+
+class ListingDailyStat(models.Model):
+    """Просмотры карточки по дням — для статистики владельца за месяц."""
+    item = models.ForeignKey(Item, on_delete=models.CASCADE, related_name='daily_stats', verbose_name='Объявление')
+    date = models.DateField('День')
+    views = models.PositiveIntegerField('Просмотры', default=0)
+
+    class Meta:
+        verbose_name = 'Статистика объявления за день'
+        verbose_name_plural = 'Статистика объявлений по дням'
+        constraints = [models.UniqueConstraint(fields=['item', 'date'], name='listing_daily_stat_once')]
+
+    def __str__(self):
+        return f'{self.item_id} {self.date}: {self.views}'
+
+    @classmethod
+    def bump_views(cls, item_id):
+        from django.db import IntegrityError, transaction
+        from django.db.models import F
+        from django.utils import timezone
+
+        today = timezone.localdate()
+        if cls.objects.filter(item_id=item_id, date=today).update(views=F('views') + 1):
+            return
+        try:
+            with transaction.atomic():
+                cls.objects.create(item_id=item_id, date=today, views=1)
+        except IntegrityError:
+            # Параллельный просмотр создал строку первым.
+            cls.objects.filter(item_id=item_id, date=today).update(views=F('views') + 1)
+
+
+class Report(models.Model):
+    """Жалоба на объявление (решение 16.11.2026). Разбирает сотрудник в очереди модерации."""
+    REASON_FRAUD = 'fraud'
+    REASON_PROHIBITED = 'prohibited'
+    REASON_WRONG_INFO = 'wrong_info'
+    REASON_DUPLICATE = 'duplicate'
+    REASON_UNAVAILABLE = 'unavailable'
+    REASON_OFFENSIVE = 'offensive'
+    REASON_OTHER = 'other'
+    REASON_CHOICES = [
+        (REASON_FRAUD, 'Мошенничество'),
+        (REASON_PROHIBITED, 'Запрещённая вещь'),
+        (REASON_WRONG_INFO, 'Неверные цена, фото или описание'),
+        (REASON_DUPLICATE, 'Дубликат'),
+        (REASON_UNAVAILABLE, 'Вещь уже не сдаётся'),
+        (REASON_OFFENSIVE, 'Оскорбительное содержание'),
+        (REASON_OTHER, 'Другое'),
+    ]
+
+    STATUS_NEW = 'new'
+    STATUS_DISMISSED = 'dismissed'
+    STATUS_ACTION_TAKEN = 'action_taken'
+    STATUS_CHOICES = [
+        (STATUS_NEW, 'Новая'),
+        (STATUS_DISMISSED, 'Отклонена'),
+        (STATUS_ACTION_TAKEN, 'Объявление скрыто'),
+    ]
+
+    item = models.ForeignKey(Item, on_delete=models.CASCADE, related_name='reports', verbose_name='Объявление')
+    reporter = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True,
+        related_name='listing_reports', verbose_name='Кто пожаловался',
+    )
+    reason = models.CharField('Причина', max_length=20, choices=REASON_CHOICES)
+    comment = models.TextField('Комментарий', max_length=1000, blank=True)
+    status = models.CharField('Статус', max_length=20, choices=STATUS_CHOICES, default=STATUS_NEW)
+    resolved_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='+', verbose_name='Кто разобрал',
+    )
+    resolution = models.CharField('Решение (комментарий)', max_length=500, blank=True)
+    resolved_at = models.DateTimeField('Разобрана', null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        verbose_name = 'Жалоба'
+        verbose_name_plural = 'Жалобы'
+        ordering = ['created_at']
+        indexes = [models.Index(fields=['status', 'created_at'])]
+        constraints = [
+            # Одна открытая жалоба пользователя на объявление — без накрутки.
+            models.UniqueConstraint(
+                fields=['item', 'reporter'], condition=models.Q(status='new'), name='report_one_open_per_user',
+            ),
+        ]
+
+    def __str__(self):
+        return f'Жалоба #{self.pk} на {self.item_id}: {self.get_reason_display()}'

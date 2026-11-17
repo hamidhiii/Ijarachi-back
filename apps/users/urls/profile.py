@@ -2,12 +2,15 @@ from django.conf import settings
 from django.urls import path
 from apps.users.views.profile import ProfileView, PublicUserListingsView, PublicUserView
 from apps.users.views.auth import VerificationStatusView
+from apps.users.views.myid import MyIDStubVerifyView
 
 urlpatterns = [
     path('profile/', ProfileView.as_view(), name='user-profile'),
     path('users/<int:pk>/', PublicUserView.as_view(), name='public-user-detail'),
     path('users/<int:pk>/listings/', PublicUserListingsView.as_view(), name='public-user-listings'),
     path('users/me/verification/', VerificationStatusView.as_view(), name='user-verification-status'),
+    # Заглушка MyID: отвечает 404 везде, кроме MYID_MODE=stub в dev/staging.
+    path('kyc/myid/stub/verify/', MyIDStubVerifyView.as_view(), name='kyc-myid-stub-verify'),
 ]
 
 # KYC выключен (см. KYC_ENABLED): эндпоинты не регистрируем, а не отвечаем на них
