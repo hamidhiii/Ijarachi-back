@@ -9,7 +9,7 @@ class PlanSerializer(serializers.ModelSerializer):
     class Meta:
         model = Plan
         fields = [
-            'code', 'name', 'price', 'listing_limit', 'search_priority',
+            'code', 'name', 'price', 'listing_limit', 'crm', 'search_priority',
             'staff_access', 'statistics', 'branches', 'data_export', 'rank',
         ]
 

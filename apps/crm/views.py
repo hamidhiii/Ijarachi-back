@@ -53,7 +53,9 @@ def _parse_day(value, default):
 
 
 class AccountsView(OwnerAccountMixin, APIView):
-    """GET /owner/accounts/ — кабинеты, доступные мне: свой и где я сотрудник."""
+    """GET /owner/accounts/ — кабинеты, доступные мне: свой и где я сотрудник.
+    Открыт на любом тарифе: по `plan` фронт решает, показать CRM или тарифы."""
+    plan_feature = None
 
     @extend_schema(responses=AccountSerializer(many=True))
     def get(self, request):

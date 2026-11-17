@@ -13,7 +13,7 @@ StaffMember этого владельца, а тариф владельца — 
 from rest_framework import permissions, status
 from rest_framework.exceptions import APIException
 
-from apps.billing.plans import has_feature
+from apps.billing.plans import has_feature, require_feature
 
 from .models import StaffMember
 
@@ -54,9 +54,12 @@ class OwnerAccountMixin:
     """
     Для APIView кабинета: self.account — владелец, self.role — роль.
     `owner_only = True` — только сам владелец (управление сотрудниками).
+    `plan_feature` — право тарифа владельца, без которого кабинет закрыт
+    (403 PLAN_FEATURE_REQUIRED). CRM — с START; на FREE только объявления.
     """
     permission_classes = [permissions.IsAuthenticated]
     owner_only = False
+    plan_feature = 'crm'
     # До initial() (генерация схемы API) — пустой аккаунт: queryset просто пуст.
     account = None
     role = None
@@ -66,5 +69,7 @@ class OwnerAccountMixin:
         self.account, self.role = resolve_account(request)
         if self.owner_only and self.role != ROLE_OWNER:
             raise AccessDenied('OWNER_ONLY', 'Это может только владелец аккаунта.')
+        if self.plan_feature:
+            require_feature(self.account, self.plan_feature)
         if request.method not in permissions.SAFE_METHODS and self.role == StaffMember.ROLE_VIEWER:
             raise AccessDenied('READ_ONLY_ROLE', 'Роль «только просмотр» не может вносить изменения.')

@@ -33,6 +33,8 @@ class Plan(models.Model):
     # Пусто — без лимита (PRO).
     listing_limit = models.PositiveIntegerField('Лимит активных объявлений', null=True, blank=True)
     search_priority = models.BooleanField('Приоритет в выдаче', default=False)
+    # Кабинет owner.rentoo.uz: брони, склад, клиенты, напоминания и бот (START+).
+    crm = models.BooleanField('CRM (кабинет)', default=False)
     staff_access = models.BooleanField('Сотрудники в кабинете', default=False)
     statistics = models.BooleanField('Статистика', default=False)
     branches = models.BooleanField('Несколько точек (филиалы)', default=False)

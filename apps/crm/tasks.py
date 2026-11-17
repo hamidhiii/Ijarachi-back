@@ -22,6 +22,7 @@ def _recipients(owner):
 @shared_task
 def remind_reservations():
     from apps.notifications.models import Notification
+    from apps.billing.plans import has_feature
     from apps.notifications.tasks import create_notification
 
     from .models import Reservation
@@ -34,6 +35,9 @@ def remind_reservations():
     )
     for field, qs, title in jobs:
         for reservation in qs.exclude(**{field: today}).select_related('item', 'client', 'owner'):
+            # Тариф кончился (FREE без CRM) — не напоминаем, бронь остаётся.
+            if not has_feature(reservation.owner, 'crm'):
+                continue
             # Отметка — условным UPDATE: два воркера не пошлют одно и то же дважды.
             if not Reservation.objects.filter(pk=reservation.pk).exclude(**{field: today}).update(**{field: today}):
                 continue

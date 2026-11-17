@@ -29,6 +29,7 @@ class CrmTestCase(APITestCase):
         cache.clear()
         self.owner = make_user()
         self.item = make_item(self.owner, quantity=10)
+        give_plan(self.owner, Plan.START)
         self.client.force_authenticate(self.owner)
 
     def reserve(self, quantity, start=1, end=3, **extra):
@@ -153,6 +154,34 @@ class ClientBaseTests(CrmTestCase):
     def test_clients_are_private_to_the_account(self):
         Client.objects.create(owner=make_user(), name='Чужой')
         self.assertEqual(self.client.get(reverse('owner-clients')).json()['count'], 0)
+
+
+class PlanGateTests(CrmTestCase):
+    """CRM — с тарифа START. На FREE кабинет закрыт, но список кабинетов открыт."""
+
+    def setUp(self):
+        super().setUp()
+        from apps.billing.models import Subscription
+
+        Subscription.objects.update(ends_at=timezone.now() - timedelta(minutes=1))
+
+    def test_free_has_no_crm(self):
+        for name in ('owner-reservations', 'owner-stock', 'owner-clients', 'owner-listings'):
+            response = self.client.get(reverse(name))
+            self.assertEqual(response.status_code, 403, name)
+            self.assertEqual((response.json()['code'], response.json()['required_plan']), ('PLAN_FEATURE_REQUIRED', 'start'))
+
+    def test_accounts_open_on_free(self):
+        response = self.client.get(reverse('owner-accounts'))
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()[0]['plan'], 'free')
+
+    def test_no_reminders_without_crm(self):
+        Reservation.objects.create(
+            owner=self.owner, item=self.item, quantity=1, start_date=day(0), end_date=day(1),
+        )
+        self.assertEqual(tasks.remind_reservations(), 0)
+        self.assertFalse(Notification.objects.exists())
 
 
 class StaffAccessTests(CrmTestCase):
@@ -311,6 +340,9 @@ class ConcurrentReservationTests(TransactionTestCase):
     def test_parallel_reservations_for_the_last_units(self):
         owner = make_user()
         item = make_item(owner, quantity=5)
+        # TransactionTestCase чистит таблицы — тариф создаём сами.
+        start, _ = Plan.objects.update_or_create(code=Plan.START, defaults={'name': 'START', 'crm': True, 'rank': 1})
+        give_plan(owner, Plan.START)
         barrier = threading.Barrier(2)
         results = [None, None]
 

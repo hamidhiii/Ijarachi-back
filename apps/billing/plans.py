@@ -31,6 +31,7 @@ def current_plan(user) -> Plan:
 
 
 FEATURE_PLAN = {
+    'crm': Plan.START,
     'search_priority': Plan.BUSINESS,
     'staff_access': Plan.BUSINESS,
     'statistics': Plan.BUSINESS,

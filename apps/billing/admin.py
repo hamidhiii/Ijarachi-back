@@ -5,7 +5,7 @@ from .models import BillingOrder, Plan, Promotion, Subscription, SubscriptionPer
 
 @admin.register(Plan)
 class PlanAdmin(admin.ModelAdmin):
-    list_display = ('name', 'code', 'price', 'listing_limit', 'search_priority', 'staff_access',
+    list_display = ('name', 'code', 'price', 'listing_limit', 'crm', 'search_priority', 'staff_access',
                     'statistics', 'branches', 'data_export', 'is_active')
     list_editable = ('price', 'listing_limit', 'is_active')
     readonly_fields = ('code',)
