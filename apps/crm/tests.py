@@ -61,7 +61,7 @@ class ReservationStockTests(CrmTestCase):
         self.assertEqual(self.reserve(4, 1, 2).status_code, 201)  # дни 1–2: 6 + 4
 
         stock = self.client.get(reverse('owner-stock'), {'date': day(4).isoformat()}).json()
-        self.assertEqual(stock[0], {'id': self.item.pk, 'title': self.item.title, 'branch': None,
+        self.assertEqual(stock[0], {'id': self.item.pk, 'title': self.item.title, 'status': 'approved', 'branch': None,
                                     'quantity': 10, 'booked': 4, 'free': 6})
         period = self.client.get(reverse('owner-stock'), {'from': day(1).isoformat(), 'to': day(5).isoformat()}).json()
         self.assertEqual(period[0]['free'], 0)
