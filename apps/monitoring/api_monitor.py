@@ -122,7 +122,7 @@ class LoginView(APIView):
         access = get_access(user) if user else None
         if access is None:
             return Response({'code': 'MONITOR_LOGIN_FAILED',
-                             'detail': 'Неверный телефон или пароль, или нет доступа к монитору.'},
+                             'detail': 'Неверный логин или пароль, или нет доступа к панели.'},
                             status=status.HTTP_401_UNAUTHORIZED)
         refresh = RefreshToken.for_user(user)
         return Response({'access': str(refresh.access_token), 'refresh': str(refresh), 'me': _me(user, access)})
