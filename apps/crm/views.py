@@ -7,6 +7,7 @@ API кабинета владельца (owner.rentoo.uz): /api/v1/owner/...
 """
 from datetime import date, timedelta
 
+from django.db import transaction
 from django.db.models import Count, Max, Q
 from django.utils import timezone
 from django.utils.dateparse import parse_date
@@ -126,36 +127,66 @@ class BranchDetailView(OwnerAccountMixin, generics.RetrieveUpdateDestroyAPIView)
 
 # ─── Объявления, календарь, остатки ──────────────────────────────────────────
 
-class OwnerListingsView(OwnerAccountMixin, generics.ListAPIView):
-    """GET /owner/listings/?branch= — объявления аккаунта с количеством и свободным сегодня."""
+class OwnerListingsView(OwnerAccountMixin, generics.ListCreateAPIView):
+    """
+    GET /owner/listings/?branch= — товары и объявления аккаунта с количеством и свободным сегодня.
+    POST — новый товар «только в кабинете» {title, quantity, price_per_day, …}: сразу в остатках
+    и бронях, на rentoo.uz не виден и в лимит объявлений не входит.
+    """
     serializer_class = OwnerListingSerializer
     pagination_class = None
 
     def get_queryset(self):
-        qs = Item.objects.filter(owner=self.account).order_by('title', 'pk')
+        qs = (
+            Item.objects.filter(owner=self.account)
+            .exclude(status__in=[Item.STATUS_INACTIVE, Item.STATUS_REJECTED])
+            .prefetch_related('images').order_by('title', 'pk')
+        )
         branch = self.request.query_params.get('branch')
         if branch:
             qs = qs.filter(branch_id=branch)
         return qs
+
+    def get_serializer_context(self):
+        return {**super().get_serializer_context(), 'account': self.account}
 
     def list(self, request, *args, **kwargs):
         today = timezone.localdate()
         items = list(self.get_queryset())
         for item in items:
             item.free_today = free_units(item, today, today)
-        return Response(OwnerListingSerializer(items, many=True, context={'account': self.account}).data)
+        return Response(self.get_serializer(items, many=True).data)
+
+    def perform_create(self, serializer):
+        from apps.catalog.models import ItemAvailability
+
+        if serializer.validated_data.get('branch') is not None:
+            require_feature(self.account, 'branches')
+        with transaction.atomic():
+            item = serializer.save(owner=self.account, status=Item.STATUS_CRM)
+            ItemAvailability.objects.get_or_create(item=item)
+        item.free_today = item.quantity
 
 
-class OwnerListingDetailView(OwnerAccountMixin, generics.UpdateAPIView):
-    """PATCH /owner/listings/{id}/ {"branch": id|null} — привязать объявление к точке (PRO)."""
+class OwnerListingDetailView(OwnerAccountMixin, generics.RetrieveUpdateAPIView):
+    """
+    GET/PATCH /owner/listings/{id}/ — товар: количество, цена, залог, точка (PRO);
+    у товара «только в кабинете» — также название, описание, категория и адрес.
+    """
     serializer_class = OwnerListingSerializer
-    http_method_names = ['patch']
+    http_method_names = ['get', 'patch']
 
     def get_queryset(self):
-        return Item.objects.filter(owner=self.account)
+        return Item.objects.filter(owner=self.account).prefetch_related('images')
 
     def get_serializer_context(self):
         return {**super().get_serializer_context(), 'account': self.account}
+
+    def get_object(self):
+        item = super().get_object()
+        today = timezone.localdate()
+        item.free_today = free_units(item, today, today)
+        return item
 
     def perform_update(self, serializer):
         if serializer.validated_data.get('branch') is not None:
@@ -163,6 +194,43 @@ class OwnerListingDetailView(OwnerAccountMixin, generics.UpdateAPIView):
         item = serializer.save()
         today = timezone.localdate()
         item.free_today = free_units(item, today, today)
+
+
+class OwnerListingPublishView(OwnerAccountMixin, APIView):
+    """
+    POST /owner/listings/{id}/publish/ — товар «только в кабинете» → объявление
+    на rentoo.uz (на модерацию). Нужны категория, описание и адрес; не хватает —
+    400 `LISTING_INCOMPLETE` с `missing`. Лимит тарифа — 400 `LIMIT_REACHED`.
+    """
+
+    @extend_schema(request=None, responses=OwnerListingSerializer)
+    def post(self, request, pk):
+        from apps.catalog.limits import enforce_listing_limit
+
+        with transaction.atomic():
+            item = Item.objects.select_for_update().filter(owner=self.account, pk=pk).first()
+            if item is None:
+                raise NotFound('Товар не найден.')
+            if item.status != Item.STATUS_CRM:
+                raise CrmError('ALREADY_PUBLISHED', 'Товар уже опубликован на Rentoo.')
+            missing = [
+                name for name, filled in (
+                    ('category', item.category_id), ('description', len(item.description.strip()) >= 10),
+                    ('address', item.address.strip()),
+                ) if not filled
+            ]
+            if missing:
+                raise CrmError(
+                    'LISTING_INCOMPLETE',
+                    'Для объявления на Rentoo нужны категория, описание (от 10 символов) и адрес.',
+                    missing=missing,
+                )
+            enforce_listing_limit(self.account)
+            item.status = Item.STATUS_PENDING
+            item.save(update_fields=['status', 'updated_at'])
+        today = timezone.localdate()
+        item.free_today = free_units(item, today, today)
+        return Response(OwnerListingSerializer(item, context={'account': self.account, 'request': request}).data)
 
 
 class ListingCalendarView(OwnerAccountMixin, APIView):
@@ -216,14 +284,14 @@ class StockView(OwnerAccountMixin, APIView):
         start = day or _parse_day(request.query_params.get('from'), today)
         end = day or _parse_day(request.query_params.get('to'), start)
         date_range(start, end, limit_days=366)
-        items = Item.objects.filter(owner=self.account).exclude(status=Item.STATUS_REJECTED).order_by('title', 'pk')
+        items = Item.objects.filter(owner=self.account).exclude(status__in=[Item.STATUS_REJECTED, Item.STATUS_INACTIVE]).order_by('title', 'pk')
         if request.query_params.get('branch'):
             items = items.filter(branch_id=request.query_params['branch'])
         rows = []
         for item in items:
             free = free_units(item, start, end)
             rows.append({
-                'id': item.pk, 'title': item.title, 'branch': item.branch_id,
+                'id': item.pk, 'title': item.title, 'branch': item.branch_id, 'status': item.status,
                 'quantity': item.quantity, 'booked': item.quantity - free, 'free': free,
             })
         return Response(StockRowSerializer(rows, many=True).data)

@@ -64,7 +64,11 @@ def verify_init_data(
     if bot_token is None:
         # The Mini App bot (@rentoo_app) and the OTP bot are different bots;
         # data from either is genuine if its own token signed it.
-        tokens = [t for t in (settings.TELEGRAM_WEBAPP_BOT_TOKEN, settings.TELEGRAM_BOT_TOKEN) if t]
+        # The owner cabinet opens as a Mini App from the CRM bot (CRM_BOT_TOKEN).
+        tokens = [
+            t for t in (settings.TELEGRAM_WEBAPP_BOT_TOKEN, settings.TELEGRAM_BOT_TOKEN,
+                        getattr(settings, 'CRM_BOT_TOKEN', '')) if t
+        ]
     else:
         tokens = [bot_token] if bot_token else []
     if not init_data or not tokens or len(init_data) > 4096:
@@ -117,6 +121,19 @@ def verify_init_data(
         first_name=str(user.get('first_name') or ''),
         language_code=str(user.get('language_code') or ''),
     )
+
+
+def crm_user_for(telegram_user_id: int):
+    """The Rentoo user who linked this Telegram account to the CRM bot, or None.
+
+    That link is made from a signed-in cabinet with a one-time token and binds
+    the private chat whose id *is* the Telegram user id (apps.crm.telegram) —
+    proof of the account as good as a number shared with the OTP bot.
+    """
+    from apps.crm.models import CrmBotLink
+
+    link = CrmBotLink.objects.select_related('user').filter(chat_id=telegram_user_id, user__is_active=True).first()
+    return link.user if link else None
 
 
 def link_for(telegram_user_id: int) -> TelegramLink | None:

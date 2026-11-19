@@ -20,7 +20,7 @@ from ..serializers import (
     PhoneChangeVerifySerializer,
 )
 from ..otp import check_code, generate_otp, send_otp, telegram_deep_link, telegram_link_required
-from ..telegram_webapp import link_for, verify_init_data
+from ..telegram_webapp import crm_user_for, link_for, verify_init_data
 from apps.monitoring import events
 from apps.monitoring.models import AuthEvent
 from rest_framework.exceptions import ValidationError
@@ -242,13 +242,18 @@ class TelegramWebAppLoginView(APIView):
             )
 
         link = link_for(tg_user.id)
-        if link is None:
+        crm_user = None if link is not None else crm_user_for(tg_user.id)
+        if link is None and crm_user is None:
             return Response(
                 {'code': 'telegram_not_linked', 'detail': 'Поделитесь номером телефона в Telegram, чтобы войти.'},
                 status=status.HTTP_404_NOT_FOUND,
             )
 
-        user, is_new = CustomUser.objects.get_or_create(phone=link.phone)
+        if crm_user is not None:
+            # Кабинет из CRM-бота: Telegram привязан к аккаунту из кабинета.
+            user, is_new = crm_user, False
+        else:
+            user, is_new = CustomUser.objects.get_or_create(phone=link.phone)
         if is_new:
             # The post_save signal normally made it already.
             Profile.objects.get_or_create(user=user)
@@ -262,8 +267,8 @@ class TelegramWebAppLoginView(APIView):
         events.record(
             request,
             AuthEvent.REGISTER_OK if is_new else AuthEvent.LOGIN_OK,
-            phone=link.phone,
-            detail='telegram_webapp',
+            phone=user.phone,
+            detail='telegram_webapp' if crm_user is None else 'telegram_webapp_crm',
         )
 
         refresh = RefreshToken.for_user(user)

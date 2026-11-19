@@ -48,6 +48,10 @@ class Item(models.Model):
     STATUS_INACTIVE = 'inactive'
     # Скрыто модератором (жалоба, нарушение): владелец сам вернуть не может.
     STATUS_BLOCKED = 'blocked'
+    # Товар проката только в кабинете owner.rentoo.uz: участвует в остатках и
+    # бронях, на rentoo.uz не виден и в лимит объявлений не входит. Кнопка
+    # «Опубликовать на Rentoo» переводит его в «На модерации».
+    STATUS_CRM = 'crm'
     STATUS_ACTIVE = STATUS_APPROVED
     STATUS_MODERATION = STATUS_PENDING
 
@@ -57,6 +61,7 @@ class Item(models.Model):
         (STATUS_REJECTED, 'Отклонено'),
         (STATUS_INACTIVE, 'Неактивно'),
         (STATUS_BLOCKED, 'Скрыто модератором'),
+        (STATUS_CRM, 'Только в кабинете'),
     ]
 
     CONDITION_NEW = 'new'

@@ -7,6 +7,7 @@ from rest_framework import serializers
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from . import bot_booking as booking
 from . import telegram as bot
 from .access import OwnerAccountMixin
 from .models import CrmBotLink
@@ -42,9 +43,11 @@ class CrmBotWebhookView(APIView):
         sender = message.get('from') or {}
         if text.startswith('/start'):
             bot.handle_start(chat['id'], sender, text)
-        elif bot.is_today_command(text):
+        elif booking.is_new_command(text):
+            booking.start(chat['id'], sender)
+        elif bot.is_today_command(text) or booking.is_today_button(text):
             bot.send_today(chat['id'], sender)
-        else:
+        elif not booking.handle_text(chat['id'], sender, text):
             bot.send_help(chat['id'], sender)
         return HttpResponse(status=200)
 

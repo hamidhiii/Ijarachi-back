@@ -2,7 +2,7 @@ from django.contrib.auth import get_user_model
 from drf_spectacular.utils import extend_schema_field
 from rest_framework import serializers
 
-from apps.catalog.models import Item
+from apps.catalog.models import Category, Item
 
 from .models import Branch, Client, Reservation, StaffMember
 
@@ -115,19 +115,88 @@ class ClientDetailSerializer(ClientSerializer):
 
 
 class OwnerListingSerializer(serializers.ModelSerializer):
+    """
+    Товар в кабинете. Новый — «только в кабинете» (status=crm): название,
+    количество и цена обязательны, остальное — когда захочется опубликовать.
+    У опубликованного объявления здесь меняются только количество, цены и
+    точка: текст, категория и адрес прошли модерацию — их правят на rentoo.uz.
+    """
     branch = serializers.PrimaryKeyRelatedField(queryset=Branch.objects.none(), allow_null=True, required=False)
+    category = serializers.PrimaryKeyRelatedField(
+        queryset=Category.objects.filter(is_active=True),
+        allow_null=True, required=False,
+    )
     free_today = serializers.IntegerField(read_only=True)
+    in_catalog = serializers.SerializerMethodField(help_text='Видно ли на rentoo.uz (одобрено)')
+    photo = serializers.SerializerMethodField()
+
+    MODERATED = ('title', 'description', 'category', 'address', 'city')
 
     class Meta:
         model = Item
-        fields = ['id', 'title', 'status', 'quantity', 'price_per_day', 'branch', 'free_today']
-        read_only_fields = ['id', 'title', 'status', 'quantity', 'price_per_day']
+        fields = [
+            'id', 'title', 'status', 'quantity', 'price_per_day', 'deposit', 'description',
+            'category', 'address', 'city', 'branch', 'free_today', 'in_catalog', 'photo',
+        ]
+        read_only_fields = ['id', 'status']
+        extra_kwargs = {
+            'description': {'required': False, 'allow_blank': True},
+            'address': {'required': False, 'allow_blank': True},
+            'deposit': {'required': False},
+        }
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         account = self.context.get('account')
         if account is not None:
             self.fields['branch'].queryset = Branch.objects.filter(owner=account)
+
+    @extend_schema_field(serializers.BooleanField())
+    def get_in_catalog(self, obj):
+        return obj.status == Item.STATUS_APPROVED
+
+    @extend_schema_field(serializers.URLField(allow_null=True))
+    def get_photo(self, obj):
+        image = next(iter(sorted(obj.images.all(), key=lambda i: (not i.is_primary, i.order, i.pk))), None)
+        if image is None or not image.image:
+            return None
+        request = self.context.get('request')
+        return request.build_absolute_uri(image.image.url) if request else image.image.url
+
+    def validate_price_per_day(self, value):
+        if value <= 0:
+            raise serializers.ValidationError('Цена должна быть больше нуля.')
+        return value
+
+    def validate_deposit(self, value):
+        if value < 0:
+            raise serializers.ValidationError('Залог не может быть отрицательным.')
+        return value
+
+    def validate_quantity(self, value):
+        if self.instance is not None and value < self.instance.quantity:
+            from apps.bookings.availability import future_units_by_day
+
+            busiest = max(future_units_by_day(self.instance).values(), default=0)
+            if value < busiest:
+                raise serializers.ValidationError(
+                    f'На ближайшие даты уже забронировано {busiest} шт. — количество не может быть меньше.'
+                )
+        return value
+
+    def validate(self, attrs):
+        instance = self.instance
+        if instance is not None and instance.status != Item.STATUS_CRM:
+            touched = [name for name in self.MODERATED if name in attrs and attrs[name] != getattr(instance, name)]
+            if touched:
+                raise serializers.ValidationError({
+                    name: 'Объявление уже на Rentoo — текст, категорию и адрес меняйте на rentoo.uz.' for name in touched
+                })
+        if instance is None:
+            for name in ('title', 'quantity', 'price_per_day'):
+                if name not in attrs:
+                    raise serializers.ValidationError({name: 'Обязательное поле.'})
+        return attrs
 
 
 class CalendarDaySerializer(serializers.Serializer):
@@ -148,6 +217,7 @@ class ListingCalendarSerializer(serializers.Serializer):
 class StockRowSerializer(serializers.Serializer):
     id = serializers.IntegerField()
     title = serializers.CharField()
+    status = serializers.CharField(help_text='crm — только в кабинете; pending/approved — на Rentoo')
     branch = serializers.IntegerField(allow_null=True)
     quantity = serializers.IntegerField()
     booked = serializers.IntegerField()

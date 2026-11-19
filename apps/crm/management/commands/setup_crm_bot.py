@@ -6,13 +6,15 @@ DESCRIPTION = {
     'uz': (
         "Rentoo prokatlari uchun CRM bot.\n"
         "Ertalab — bugun kimga berish va kimdan qaytarib olish. Bir tugma bilan: "
-        "berildi, qaytarildi, ko'chirish.\n\n"
+        "berildi, qaytarildi, ko'chirish. Yangi bronni ham shu yerda yozasiz, "
+        "to'liq kabinet — «Kabinet» tugmasida.\n\n"
         "Ulash: owner.rentoo.uz kabinetida «Telegram'ni ulash»."
     ),
     'ru': (
         'CRM-бот для прокатов Rentoo.\n'
         'Утром — кому сегодня выдать и у кого забрать. В одну кнопку: '
-        'выдано, принято, перенести.\n\n'
+        'выдано, принято, перенести. Новую бронь тоже можно записать здесь, '
+        'весь кабинет — кнопка «Кабинет».\n\n'
         'Подключение: «Подключить Telegram» в кабинете owner.rentoo.uz.'
     ),
 }
@@ -21,8 +23,10 @@ SHORT = {
     'ru': 'CRM для прокатов Rentoo: выдачи и возвраты на сегодня — кнопками.',
 }
 COMMANDS = {
-    'uz': [{'command': 'bugun', 'description': 'Bugungi berish va qaytarishlar'}],
-    'ru': [{'command': 'bugun', 'description': 'Выдачи и возвраты на сегодня'}],
+    'uz': [{'command': 'yangi', 'description': 'Yangi bron yozish'},
+           {'command': 'bugun', 'description': 'Bugungi berish va qaytarishlar'}],
+    'ru': [{'command': 'yangi', 'description': 'Записать новую бронь'},
+           {'command': 'bugun', 'description': 'Выдачи и возвраты на сегодня'}],
 }
 
 
@@ -52,6 +56,15 @@ class Command(BaseCommand):
             self._call('setMyDescription', {'description': DESCRIPTION[lang], **extra})
             self._call('setMyShortDescription', {'short_description': SHORT[lang], **extra})
             self._call('setMyCommands', {'commands': COMMANDS[lang], **extra})
+
+        from django.conf import settings
+
+        cabinet = settings.OWNER_FRONTEND_BASE_URL.rstrip('/') + '/'
+        if cabinet.startswith('https://'):
+            # Кнопка меню слева от поля ввода открывает кабинет как Mini App.
+            self._call('setChatMenuButton', {'menu_button': {
+                'type': 'web_app', 'text': 'Kabinet', 'web_app': {'url': cabinet},
+            }})
 
         url = f'{base_url}/api/v1/telegram/webhook/crm/'
         self._call('setWebhook', {

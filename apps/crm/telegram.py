@@ -79,10 +79,10 @@ TEXTS = {
         'no_crm': 'CRM START tarifidan ishlaydi: {url}',
         'today_empty': "Bugun berish va qaytarish yo'q.",
         'today_more': "Yana {n} ta — kabinetda: {url}",
-        'linked': "Tayyor, {name}! Endi bu yerga ertalab bugungi berish va qaytarishlar tugmalar bilan keladi. Bugungi ro'yxat — /bugun",
+        'linked': "Tayyor, {name}! Endi bu yerga ertalab bugungi berish va qaytarishlar tugmalar bilan keladi.\n\n➕ Yangi bron — bron yozish, 📅 Bugun — bugungi ro'yxat, «Kabinet» tugmasi — to'liq kabinet.",
         'link_expired': "Havola eskirgan. Kabinetda «Telegram'ni ulash» tugmasini qayta bosing: {url}",
         'stale': "Bron holati allaqachon o'zgargan — karta yangilandi.",
-        'help': "Bugungi berish va qaytarishlar — /bugun. Bronlar, ombor va mijozlar — kabinetda: {url}",
+        'help': "➕ Yangi bron — bron yozish, 📅 Bugun — bugungi berish va qaytarishlar. Mahsulotlar, ombor va mijozlar — kabinetda.",
         'start_hint': "Bu Rentoo prokatlari uchun CRM bot. Uni ulash uchun kabinetda «Telegram'ni ulash» tugmasini bosing: {url}",
     },
     'ru': {
@@ -118,10 +118,10 @@ TEXTS = {
         'no_crm': 'CRM работает с тарифа START: {url}',
         'today_empty': 'Сегодня выдач и возвратов нет.',
         'today_more': 'Ещё {n} — в кабинете: {url}',
-        'linked': 'Готово, {name}! Теперь сюда по утрам будут приходить выдачи и возвраты на сегодня — с кнопками. Список на сегодня — /bugun',
+        'linked': 'Готово, {name}! Теперь сюда по утрам будут приходить выдачи и возвраты на сегодня — с кнопками.\n\n➕ Новая бронь — записать бронь, 📅 Сегодня — список на сегодня, кнопка «Кабинет» — весь кабинет.',
         'link_expired': 'Ссылка устарела. Нажмите «Подключить Telegram» в кабинете ещё раз: {url}',
         'stale': 'Статус брони уже изменился — карточка обновлена.',
-        'help': 'Выдачи и возвраты на сегодня — /bugun. Брони, склад и клиенты — в кабинете: {url}',
+        'help': '➕ Новая бронь — записать бронь, 📅 Сегодня — выдачи и возвраты на сегодня. Товары, склад и клиенты — в кабинете.',
         'start_hint': 'Это CRM-бот для прокатов Rentoo. Чтобы подключить его, нажмите «Подключить Telegram» в кабинете: {url}',
     },
 }
@@ -281,7 +281,10 @@ def handle_start(chat_id, from_user, text):
         'chat_id': chat_id, 'username': (from_user or {}).get('username') or '', 'language': lang,
     })
     logger.info('CRM bot linked: user %s -> chat %s', user.pk, chat_id)
-    api('sendMessage', {'chat_id': chat_id, 'text': t['linked'].format(name=_person(user))})
+    from .bot_booking import menu_keyboard
+
+    api('sendMessage', {'chat_id': chat_id, 'text': t['linked'].format(name=_person(user)),
+                        'reply_markup': menu_keyboard(lang)})
 
 
 def _link_for(chat_id, from_user):
@@ -345,6 +348,11 @@ def _apply(reservation, action, lang, actor):
 def handle_callback(callback):
     """Обрабатывает callback_query с `crm:…`; False — кнопка не наша."""
     parts = (callback.get('data') or '').split(':')
+    if len(parts) >= 3 and parts[0] == PREFIX and parts[1] == 'nb':
+        from .bot_booking import handle_callback as new_booking
+
+        new_booking(callback, ':'.join(parts[2:]))
+        return True
     if len(parts) != 3 or parts[0] != PREFIX or not parts[2].isdigit():
         return False
     action, reservation_id = parts[1], int(parts[2])
@@ -449,7 +457,11 @@ def send_today(chat_id, from_user):
     )
     total = due.count()
     if not total:
-        api('sendMessage', {'chat_id': chat_id, 'text': t['today_empty']})
+        from .bot_booking import TEXTS as NB
+
+        api('sendMessage', {'chat_id': chat_id, 'text': t['today_empty'], 'reply_markup': {'inline_keyboard': [
+            [{'text': (NB.get(lang) or NB['uz'])['btn_new'], 'callback_data': f'{PREFIX}:nb:new'}],
+        ]}})
         return
     for reservation in due[:TODAY_LIMIT]:
         send_card(chat_id, reservation, lang)
@@ -468,7 +480,16 @@ def send_help(chat_id, from_user):
     if link is None:
         api('sendMessage', {'chat_id': chat_id, 'text': t['start_hint'].format(url=_owner_url('/'))})
         return
-    api('sendMessage', {'chat_id': chat_id, 'text': t['help'].format(url=_owner_url('/'))})
+    from .bot_booking import TEXTS as NB, cabinet_button, menu_keyboard
+
+    nb = NB.get(lang) or NB['uz']
+    api('sendMessage', {'chat_id': chat_id, 'text': t['help'], 'reply_markup': {'inline_keyboard': [
+        [{'text': nb['btn_new'], 'callback_data': f'{PREFIX}:nb:new'},
+         {'text': nb['btn_today'], 'callback_data': f'{PREFIX}:nb:today'}],
+        [cabinet_button(lang)],
+    ]}})
+    # Нижние кнопки — если клиент их скрыл или подключался до их появления.
+    api('sendMessage', {'chat_id': chat_id, 'text': nb['menu'], 'reply_markup': menu_keyboard(lang)})
 
 
 def is_today_command(text):

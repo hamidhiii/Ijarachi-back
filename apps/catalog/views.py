@@ -187,6 +187,8 @@ class MyItemsView(generics.ListAPIView):
         return (
             Item.objects
             .filter(owner=self.request.user)
+            # Товары «только в кабинете» живут на owner.rentoo.uz, не в объявлениях.
+            .exclude(status=Item.STATUS_CRM)
             .select_related('category', 'owner__profile')
             .prefetch_related('images')
         )
@@ -255,7 +257,7 @@ class MyListingsStatsView(APIView):
         items = (
             Item.objects
             .filter(owner=request.user)
-            .exclude(status=Item.STATUS_INACTIVE)
+            .exclude(status__in=[Item.STATUS_INACTIVE, Item.STATUS_CRM])
             .annotate(
                 requests=Count('bookings', filter=~Q(bookings__status=Booking.STATUS_DRAFT), distinct=True),
                 deals=Count('bookings', filter=Q(bookings__status__in=paid), distinct=True),
