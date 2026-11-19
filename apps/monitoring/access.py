@@ -21,6 +21,16 @@ class SuperuserAccess:
     can_manage_access = True
 
     sections = ['Сделки', 'Споры', 'KYC', 'Платежи', 'Ошибки', 'Доступы']
+    role = 'superuser'
+
+    def level(self, section):
+        return 'edit'
+
+    @property
+    def permissions(self):
+        from .roles import SECTION_KEYS
+
+        return {key: 'edit' for key in SECTION_KEYS}
 
 
 def get_access(user):

@@ -8,6 +8,7 @@ from apps.billing.models import Plan
 from apps.billing.testing import give_plan
 from apps.bookings.testing import make_item, make_user
 from apps.monitoring.models import AuthEvent, MonitorAccess
+from apps.monitoring.roles import ROLES
 
 
 class MonitorApiTests(APITestCase):
@@ -15,7 +16,7 @@ class MonitorApiTests(APITestCase):
         self.staff = make_user()
         self.staff.set_password('secret-pass-1')
         self.staff.save()
-        MonitorAccess.objects.create(user=self.staff, can_view_payments=False)
+        MonitorAccess.objects.create(user=self.staff, permissions=dict(ROLES['viewer'][1], payments='none'))
 
     def login(self, user=None):
         self.client.force_authenticate(user or self.staff)
@@ -25,7 +26,7 @@ class MonitorApiTests(APITestCase):
         ok = self.client.post(url, {'phone': self.staff.phone, 'password': 'secret-pass-1'}, format='json')
         self.assertEqual(ok.status_code, 200, ok.content)
         self.assertTrue(ok.json()['access'])
-        self.assertFalse(ok.json()['me']['can_view_payments'])
+        self.assertEqual(ok.json()['me']['permissions']['payments'], 'none')
 
         stranger = make_user()
         stranger.set_password('secret-pass-1')
@@ -53,7 +54,7 @@ class MonitorApiTests(APITestCase):
         self.assertEqual(len(data['series']['dates']), 30)
         self.assertEqual(next(k for k in data['kpis'] if k['key'] == 'paying')['value'], 1)
 
-        MonitorAccess.objects.filter(user=self.staff).update(can_view_payments=True)
+        MonitorAccess.objects.filter(user=self.staff).update(permissions=ROLES['viewer'][1])
         self.client.force_authenticate(type(self.staff).objects.get(pk=self.staff.pk))
         data = self.client.get(reverse('monitor-api-overview')).json()
         self.assertIn('revenue', {k['key'] for k in data['kpis']})

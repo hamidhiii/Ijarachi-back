@@ -27,36 +27,60 @@ from .access import get_access
 
 User = get_user_model()
 PAGE = 25
-FLAGS = ('can_view_deals', 'can_view_disputes', 'can_view_kyc', 'can_view_payments', 'can_view_errors',
-         'can_manage_access')
-
-
 def _me(user, access):
+    from .roles import ROLES, SECTIONS, normalize
+
     profile = getattr(user, 'profile', None)
+    permissions = access.permissions if access.is_superuser else normalize(access.permissions)
     return {
         'id': user.pk, 'phone': user.phone, 'name': getattr(profile, 'full_name', '') or '',
         'superuser': bool(access.is_superuser),
-        **{flag: bool(getattr(access, flag, False)) for flag in FLAGS},
+        'role': access.role, 'role_label': 'Суперюзер' if access.is_superuser else ROLES.get(access.role, ('Своя',))[0],
+        'permissions': permissions,
+        'sections': [{'key': key, 'label': label, 'hint': hint} for key, label, hint in SECTIONS],
     }
 
 
 class MonitorPermission(permissions.BasePermission):
+    """
+    Раздел вью (`section`) и метод решают: GET — нужен уровень view, остальное — edit.
+    `edit_section` — когда менять разрешает другой раздел (тариф из карточки пользователя).
+    """
+
     def has_permission(self, request, view):
+        from .roles import RANK
+
         if not request.user or not request.user.is_authenticated:
             return False
         access = get_access(request.user)
         if access is None:
             return False
         request.monitor_access = access
-        need = getattr(view, 'capability', None)
-        if need and not getattr(access, need, False):
-            raise PermissionDenied({'code': 'MONITOR_SECTION_DENIED', 'detail': 'Этот раздел вам не открыт.'})
+        section = getattr(view, 'section', None)
+        if not section:
+            return True
+        write = request.method not in permissions.SAFE_METHODS
+        if write:
+            section = getattr(view, 'edit_section', None) or section
+        need = 2 if write else 1
+        if RANK[access.level(section)] < need:
+            raise PermissionDenied({
+                'code': 'PANEL_FORBIDDEN',
+                'detail': 'Недостаточно прав: ' + ('менять' if write else 'смотреть') + ' этот раздел вам не разрешено.',
+                'section': section,
+            })
         return True
 
 
 class MonitorView(APIView):
     permission_classes = [MonitorPermission]
-    capability = None
+    section = None
+
+
+def can(request, section, level='view'):
+    from .roles import RANK
+
+    return RANK[request.monitor_access.level(section)] >= RANK[level]
 
 
 def _days(request, default=7):
@@ -110,20 +134,23 @@ class MeView(MonitorView):
 
 
 class LiveView(MonitorView):
+    section = 'analytics'
+
     def get(self, request):
         return Response(presence.live())
 
 
 class OverviewView(MonitorView):
+    section = 'analytics'
+
     def get(self, request):
         return Response(metrics.overview(_days(request), request.monitor_access))
 
 
 class ChecksView(MonitorView):
+    section = 'analytics'
+
     def get(self, request):
-        access = request.monitor_access
-        if not (access.can_view_errors or access.can_view_deals):
-            return Response({'checks': [], 'stuck': []})
         result = []
         for check in checks.run_checks():
             result.append({
@@ -140,7 +167,7 @@ class ChecksView(MonitorView):
 
 
 class FunnelView(MonitorView):
-    capability = 'can_view_errors'
+    section = 'analytics'
 
     def get(self, request):
         data = metrics.auth_funnel(_days(request))
@@ -152,6 +179,8 @@ class FunnelView(MonitorView):
 
 
 class UsersView(MonitorView):
+    section = 'users'
+
     def get(self, request):
         from apps.billing.models import Subscription
 
@@ -191,6 +220,8 @@ class UsersView(MonitorView):
 
 
 class ListingsView(MonitorView):
+    section = 'listings'
+
     def get(self, request):
         from apps.catalog.models import Item
 
@@ -209,7 +240,7 @@ class ListingsView(MonitorView):
 
 
 class DealsView(MonitorView):
-    capability = 'can_view_deals'
+    section = 'deals'
 
     def get(self, request):
         from apps.bookings.models import Booking
@@ -217,7 +248,7 @@ class DealsView(MonitorView):
         qs = Booking.objects.exclude(status=Booking.STATUS_DRAFT).select_related('item', 'renter').order_by('-created_at')
         if request.query_params.get('status'):
             qs = qs.filter(status=request.query_params['status'])
-        money = request.monitor_access.can_view_payments
+        money = can(request, 'payments')
         return _page(request, qs, lambda b: {
             'id': b.pk, 'title': b.item.title if b.item_id else '—', 'renter': b.renter.phone if b.renter_id else '',
             'status': b.status, 'status_label': b.get_status_display(),
@@ -228,7 +259,7 @@ class DealsView(MonitorView):
 
 
 class OrdersView(MonitorView):
-    capability = 'can_view_payments'
+    section = 'payments'
 
     def get(self, request):
         from apps.billing.models import BillingOrder

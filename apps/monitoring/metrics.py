@@ -64,7 +64,7 @@ def overview(days, access):
     from apps.payments.models import Payment
     from apps.users.models import PassportDocument, Profile
 
-    money = bool(getattr(access, 'can_view_payments', False))
+    money = access.level('payments') in ('view', 'edit')
     today = timezone.localdate()
     start = today - timedelta(days=days - 1)
     prev_end = start - timedelta(days=1)

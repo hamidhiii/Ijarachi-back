@@ -23,6 +23,10 @@ class MonitorAccess(models.Model):
     can_view_errors = models.BooleanField('Ошибки', default=True)
     can_manage_access = models.BooleanField('Управление доступами', default=False)
 
+    # Права в админ-панели (apps.monitoring.roles): {раздел: none|view|edit}.
+    role = models.CharField('Роль', max_length=20, default='viewer')
+    permissions = models.JSONField('Права по разделам', default=dict, blank=True)
+
     note = models.CharField('Заметка', max_length=200, blank=True)
     created_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,
@@ -46,6 +50,11 @@ class MonitorAccess(models.Model):
 
     def __str__(self):
         return f'{self.user.phone} — монитор'
+
+    def level(self, section):
+        from .roles import NONE, normalize
+
+        return normalize(self.permissions).get(section, NONE)
 
     @property
     def sections(self):

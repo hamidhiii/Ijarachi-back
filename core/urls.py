@@ -1,3 +1,4 @@
+from django.views.generic import RedirectView
 from django.contrib import admin
 from django.urls import path, include
 from django.conf import settings
@@ -11,8 +12,11 @@ from apps.monitoring.api import PingView, TrackView
 from .views import AdminDashboardView, AdminFinanceExportView, AdminUserBlockView
 
 urlpatterns = [
-    path('admin/', admin.site.urls),
-    path('monitor/', include('apps.monitoring.urls')),
+    # Django-админка — запасной вход суперюзера; /admin/ — новая панель (Next, nginx).
+    path('django-admin/', admin.site.urls),
+    # Старый монитор — пока здесь, за общим паролем; основной — панель /admin/.
+    path('monitor-legacy/', include('apps.monitoring.urls')),
+    path('monitor/', RedirectView.as_view(url='/admin/', permanent=False)),
 
     # API v1
     path('api/v1/analytics/track/', TrackView.as_view(), name='analytics-track'),

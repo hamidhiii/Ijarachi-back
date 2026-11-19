@@ -47,7 +47,8 @@ class CheckResult:
 
 
 def _deal_url(booking_id):
-    return reverse('monitor:deal_detail', args=[booking_id])
+    # Карточка сделки в админ-панели (back.rentoo.uz/admin).
+    return f'/admin/deals/?id={booking_id}'
 
 
 def stuck_deals():
@@ -261,7 +262,7 @@ def kyc_waiting():
         queryset,
         label=lambda d: f'{d.user.phone} — {d.get_document_type_display()}',
         detail=lambda d: f'подан {d.submitted_at:%d.%m.%Y %H:%M}',
-        url=lambda d: reverse('monitor:kyc'),
+        url=lambda d: '/admin/kyc/',
     )
 
 
@@ -282,7 +283,7 @@ def kyc_face_failed():
         queryset,
         label=lambda f: f'{f.user.phone}',
         detail=lambda f: (f.fail_reason or 'причина не указана')[:120],
-        url=lambda f: reverse('monitor:kyc'),
+        url=lambda f: '/admin/kyc/',
     )
 
 
