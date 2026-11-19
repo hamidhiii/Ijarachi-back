@@ -108,6 +108,24 @@ class MiniAppLoginTests(APITestCase):
 
         self.assertEqual(int(AccessToken(response.json()['access'])['user_id']), owner.pk)
 
+    def test_sign_in_from_crm_bot_links_the_bot(self):
+        from apps.users.models import TelegramLink
+
+        owner = make_user()
+        TelegramLink.objects.create(phone=owner.phone, chat_id=CHAT, telegram_user_id=CHAT)
+        response = self.client.post(reverse('auth-telegram-webapp'), {'init_data': init_data('555:crm', CHAT)}, format='json')
+        self.assertEqual(response.status_code, 200, response.content)
+        self.assertEqual(CrmBotLink.objects.get(user=owner).chat_id, CHAT)
+
+    @override_settings(TELEGRAM_WEBAPP_BOT_TOKEN='777:board')
+    def test_sign_in_from_board_bot_does_not_link(self):
+        from apps.users.models import TelegramLink
+
+        owner = make_user()
+        TelegramLink.objects.create(phone=owner.phone, chat_id=CHAT, telegram_user_id=CHAT)
+        self.client.post(reverse('auth-telegram-webapp'), {'init_data': init_data('777:board', CHAT)}, format='json')
+        self.assertFalse(CrmBotLink.objects.exists())
+
     def test_unlinked_or_forged_is_refused(self):
         url = reverse('auth-telegram-webapp')
         self.assertEqual(self.client.post(url, {'init_data': init_data('555:crm', 42)}, format='json').status_code, 404)

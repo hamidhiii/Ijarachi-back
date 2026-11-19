@@ -216,6 +216,26 @@ class LoginView(VerifyOTPView):
     """Compatibility endpoint for POST /api/v1/auth/login."""
 
 
+def _link_crm_bot(init_data, tg_user, user):
+    """
+    Кабинет открыт из CRM-бота (initData подписан его токеном) и вход прошёл:
+    этот Telegram — того же человека, а личный чат с ботом — его id. Бот
+    подключается сам, без кнопки «Подключить Telegram» в кабинете.
+    """
+    from django.conf import settings
+
+    from apps.crm.models import CrmBotLink
+
+    token = getattr(settings, 'CRM_BOT_TOKEN', '')
+    if not token or verify_init_data(init_data, bot_token=token) is None:
+        return
+    CrmBotLink.objects.filter(chat_id=tg_user.id).exclude(user=user).delete()
+    lang = 'ru' if tg_user.language_code.lower().startswith('ru') else 'uz'
+    CrmBotLink.objects.update_or_create(user=user, defaults={
+        'chat_id': tg_user.id, 'username': tg_user.username, 'language': lang,
+    })
+
+
 class TelegramWebAppLoginView(APIView):
     """
     POST /api/v1/auth/telegram/  {"init_data": "<Telegram.WebApp.initData>"}
@@ -270,6 +290,7 @@ class TelegramWebAppLoginView(APIView):
             phone=user.phone,
             detail='telegram_webapp' if crm_user is None else 'telegram_webapp_crm',
         )
+        _link_crm_bot(str(request.data.get('init_data') or ''), tg_user, user)
 
         refresh = RefreshToken.for_user(user)
         return Response({

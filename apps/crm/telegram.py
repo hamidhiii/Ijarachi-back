@@ -83,7 +83,7 @@ TEXTS = {
         'link_expired': "Havola eskirgan. Kabinetda «Telegram'ni ulash» tugmasini qayta bosing: {url}",
         'stale': "Bron holati allaqachon o'zgargan — karta yangilandi.",
         'help': "➕ Yangi bron — bron yozish, 📅 Bugun — bugungi berish va qaytarishlar. Mahsulotlar, ombor va mijozlar — kabinetda.",
-        'start_hint': "Bu Rentoo prokatlari uchun CRM bot. Uni ulash uchun kabinetda «Telegram'ni ulash» tugmasini bosing: {url}",
+        'start_hint': "Bu Rentoo prokatlari uchun CRM bot. «Kabinet» tugmasini bosing va kiring — bot o'zi ulanadi.",
     },
     'ru': {
         'pickup_today': '📦 Сегодня выдать',
@@ -122,7 +122,7 @@ TEXTS = {
         'link_expired': 'Ссылка устарела. Нажмите «Подключить Telegram» в кабинете ещё раз: {url}',
         'stale': 'Статус брони уже изменился — карточка обновлена.',
         'help': '➕ Новая бронь — записать бронь, 📅 Сегодня — выдачи и возвраты на сегодня. Товары, склад и клиенты — в кабинете.',
-        'start_hint': 'Это CRM-бот для прокатов Rentoo. Чтобы подключить его, нажмите «Подключить Telegram» в кабинете: {url}',
+        'start_hint': 'Это CRM-бот для прокатов Rentoo. Нажмите «Кабинет» и войдите — бот подключится сам.',
     },
 }
 
@@ -266,7 +266,8 @@ def handle_start(chat_id, from_user, text):
         if link is not None:
             send_today(chat_id, from_user)
         else:
-            api('sendMessage', {'chat_id': chat_id, 'text': t['start_hint'].format(url=_owner_url('/'))})
+            api('sendMessage', {'chat_id': chat_id, 'text': t['start_hint'],
+                                'reply_markup': _cabinet_markup(lang)})
         return
     # Ссылка одноразовая: забираем токен до привязки, второй переход не сработает.
     user_id = cache.get(INVITE_KEY.format(code))
@@ -285,6 +286,12 @@ def handle_start(chat_id, from_user, text):
 
     api('sendMessage', {'chat_id': chat_id, 'text': t['linked'].format(name=_person(user)),
                         'reply_markup': menu_keyboard(lang)})
+
+
+def _cabinet_markup(lang):
+    from .bot_booking import cabinet_button
+
+    return {'inline_keyboard': [[cabinet_button(lang)]]}
 
 
 def _link_for(chat_id, from_user):
@@ -478,7 +485,7 @@ def send_help(chat_id, from_user):
     lang = _remember_language(link, from_user)
     t = _t(lang)
     if link is None:
-        api('sendMessage', {'chat_id': chat_id, 'text': t['start_hint'].format(url=_owner_url('/'))})
+        api('sendMessage', {'chat_id': chat_id, 'text': t['start_hint'], 'reply_markup': _cabinet_markup(lang)})
         return
     from .bot_booking import TEXTS as NB, cabinet_button, menu_keyboard
 
