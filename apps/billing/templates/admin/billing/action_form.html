@@ -1,0 +1,43 @@
+{% extends "admin/base_site.html" %}
+{% load i18n admin_urls %}
+
+{% block breadcrumbs %}
+<div class="breadcrumbs">
+  <a href="{% url 'admin:index' %}">{% translate 'Home' %}</a>
+  &rsaquo; <a href="{% url 'admin:app_list' app_label=opts.app_label %}">{{ opts.app_config.verbose_name }}</a>
+  &rsaquo; <a href="{% url opts|admin_urlname:'changelist' %}">{{ opts.verbose_name_plural|capfirst }}</a>
+  &rsaquo; {{ title }}
+</div>
+{% endblock %}
+
+{% block content %}
+<div id="content-main">
+  <p>Выбрано: <strong>{{ objects|length }}</strong></p>
+  <ul>
+    {% for obj in objects|slice:":30" %}<li>{{ obj }}</li>{% endfor %}
+    {% if objects|length > 30 %}<li>… и ещё {{ objects|length|add:"-30" }}</li>{% endif %}
+  </ul>
+  {% if note %}<p class="help">{{ note }}</p>{% endif %}
+  <form method="post">{% csrf_token %}
+    <fieldset class="module aligned">
+      {% for field in form %}
+      <div class="form-row{% if field.errors %} errors{% endif %}">
+        {{ field.errors }}
+        <div>
+          {{ field.label_tag }} {{ field }}
+          {% if field.help_text %}<div class="help">{{ field.help_text|safe }}</div>{% endif %}
+        </div>
+      </div>
+      {% endfor %}
+    </fieldset>
+    <input type="hidden" name="action" value="{{ action }}">
+    <input type="hidden" name="select_across" value="{{ select_across }}">
+    <input type="hidden" name="index" value="0">
+    {% for pk in selected %}<input type="hidden" name="_selected_action" value="{{ pk }}">{% endfor %}
+    <div class="submit-row">
+      <input type="submit" name="apply" value="Применить" class="default">
+      <a href="{% url opts|admin_urlname:'changelist' %}" class="button cancel-link">Отмена</a>
+    </div>
+  </form>
+</div>
+{% endblock %}

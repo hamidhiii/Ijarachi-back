@@ -6,18 +6,75 @@ from .models import (
 )
 
 
+class PlanFilter(admin.SimpleListFilter):
+    title = 'Тариф'
+    parameter_name = 'plan'
+
+    def lookups(self, request, model_admin):
+        from apps.billing.models import Plan
+        return [(p.code, p.name) for p in Plan.objects.order_by('rank')]
+
+    def queryset(self, request, queryset):
+        from django.utils import timezone
+        from apps.billing.models import Plan
+
+        if not self.value():
+            return queryset
+        active = {'subscription__ends_at__gt': timezone.now()}
+        if self.value() == Plan.FREE:
+            return queryset.exclude(**active)
+        return queryset.filter(subscription__plan__code=self.value(), **active)
+
+
 @admin.register(CustomUser)
 class CustomUserAdmin(UserAdmin):
-    list_display = ['phone', 'email', 'is_active', 'is_staff', 'date_joined']
-    list_filter = ['is_active', 'is_staff']
-    search_fields = ['phone', 'email']
+    list_display = ['phone', 'email', 'plan_now', 'is_active', 'is_staff', 'date_joined']
+    list_filter = [PlanFilter, 'is_active', 'is_staff']
+    search_fields = ['phone', 'email', 'profile__full_name', 'profile__shop_name']
     ordering = ['-date_joined']
+    list_select_related = ['subscription__plan']
+    readonly_fields = ['plan_now', 'plan_history']
+    actions = ['grant_plan', 'finish_plan']
     fieldsets = (
         (None, {'fields': ('phone', 'password')}),
         ('Personal info', {'fields': ('email',)}),
+        ('Тариф', {
+            'fields': ('plan_now', 'plan_history'),
+            'description': 'Сменить тариф — «Тариф сейчас» → страница подписки, '
+                           'или в списке пользователей действие «Выдать / сменить тариф».',
+        }),
         ('Permissions', {'fields': ('is_active', 'is_staff', 'is_superuser', 'groups', 'user_permissions')}),
         ('Important dates', {'fields': ('last_login', 'date_joined')}),
     )
+
+    @admin.display(description='Тариф сейчас')
+    def plan_now(self, user):
+        from django.urls import reverse
+        from django.utils import timezone
+        from django.utils.html import format_html
+
+        subscription = getattr(user, 'subscription', None)
+        if subscription is None or subscription.ends_at <= timezone.now():
+            url = reverse('admin:billing_subscription_add') + f'?user={user.pk}'
+            return format_html('FREE · <a href="{}">выдать тариф</a>', url)
+        url = reverse('admin:billing_subscription_change', args=[subscription.pk])
+        until = timezone.localtime(subscription.ends_at).strftime('%d.%m.%Y')
+        return format_html('<a href="{}">{} до {}</a>', url, subscription.plan.name, until)
+
+    @admin.display(description='История тарифа')
+    def plan_history(self, user):
+        from apps.billing.admin import history_table
+        return history_table(user) if user.pk else '—'
+
+    @admin.action(description='Выдать / сменить тариф…')
+    def grant_plan(self, request, queryset):
+        from apps.billing.admin_actions import grant_plan_action
+        return grant_plan_action(self, request, queryset)
+
+    @admin.action(description='Завершить тариф сейчас (перевести на FREE)')
+    def finish_plan(self, request, queryset):
+        from apps.billing.admin_actions import finish_plan_action
+        return finish_plan_action(self, request, queryset)
     add_fieldsets = (
         (None, {
             'classes': ('wide',),

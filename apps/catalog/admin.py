@@ -23,23 +23,45 @@ class ItemImageInline(admin.TabularInline):
 class ItemAdmin(admin.ModelAdmin):
     list_display = [
         'title', 'owner', 'category', 'price_per_day', 'is_negotiable',
-        'deposit', 'status', 'city', 'created_at',
+        'deposit', 'status', 'promotion', 'city', 'created_at',
     ]
     list_filter = ['status', 'condition', 'category', 'city', 'is_negotiable']
     search_fields = ['title', 'description', 'owner__phone']
     list_editable = ['status']
     raw_id_fields = ['owner', 'category']
     inlines = [ItemImageInline]
-    readonly_fields = ['created_at', 'updated_at']
+    readonly_fields = ['created_at', 'updated_at', 'top_until', 'vip_until']
     fieldsets = (
         ('Основное', {'fields': ('owner', 'category', 'title', 'description', 'condition', 'status')}),
         ('Цена', {'fields': ('price_per_day', 'is_negotiable', 'deposit')}),
         ('Локация', {'fields': ('city', 'address', 'latitude', 'longitude')}),
         ('Характеристики', {'fields': ('attributes',)}),
+        ('Продвижение', {
+            'fields': ('top_until', 'vip_until'),
+            'description': 'Выдать или снять — действиями в списке объявлений или в «Тарифы → Продвижения».',
+        }),
         ('Даты', {'fields': ('created_at', 'updated_at')}),
     )
 
-    actions = ['approve', 'reject', 'deactivate']
+    actions = ['approve', 'reject', 'deactivate', 'grant_promotion', 'stop_promotion']
+
+    @admin.display(description='Продвижение')
+    def promotion(self, obj):
+        from django.utils import timezone
+
+        now = timezone.now()
+        marks = [name for name, until in (('VIP', obj.vip_until), ('топ', obj.top_until)) if until and until > now]
+        return ', '.join(marks) or '—'
+
+    @admin.action(description='Дать продвижение (топ / VIP)…')
+    def grant_promotion(self, request, queryset):
+        from apps.billing.admin_actions import grant_promotion_action
+        return grant_promotion_action(self, request, queryset.select_related('owner'))
+
+    @admin.action(description='Снять продвижение…')
+    def stop_promotion(self, request, queryset):
+        from apps.billing.admin_actions import stop_promotion_action
+        return stop_promotion_action(self, request, queryset)
 
     def approve(self, request, queryset):
         queryset.update(status=Item.STATUS_APPROVED, rejection_reason='')

@@ -6,6 +6,7 @@
 from datetime import timedelta
 
 from django.conf import settings
+from django.db import transaction
 from django.utils import timezone
 
 from .models import BillingOrder, Promotion
@@ -47,23 +48,47 @@ def validate_promotion_order(user, attrs):
 
 def apply_promotion_order(order):
     """Оплата прошла: продлить продвижение объявления (под блокировкой строки)."""
-    from apps.catalog.models import Item
-
     if order.item_id is None:
         order.needs_attention = 'Объявление удалено — продвижение не применено'
         order.save(update_fields=['needs_attention'])
         return
-    item = Item.objects.select_for_update().get(pk=order.item_id)
-    field = FIELD[order.promotion]
-    now = timezone.now()
-    current = getattr(item, field)
-    starts_at = current if current and current > now else now
-    ends_at = starts_at + timedelta(days=promotion_days(order.promotion))
-    setattr(item, field, ends_at)
-    item.save(update_fields=[field, 'updated_at'])
-    Promotion.objects.create(item=item, kind=order.promotion, starts_at=starts_at, ends_at=ends_at, order=order)
+    item, ends_at = extend_promotion(order.item_id, order.promotion, promotion_days(order.promotion), order=order)
     _notify(
         order.user, 'Продвижение оплачено',
         f'{order.get_promotion_display()} для «{item.title}» действует до '
         f'{timezone.localtime(ends_at):%d.%m.%Y %H:%M}.',
     )
+
+
+@transaction.atomic
+def extend_promotion(item_id, kind, days, *, order=None):
+    """Продлить продвижение от текущего окончания (или от сейчас). Для оплаты и для выдачи сотрудником."""
+    from apps.catalog.models import Item
+
+    item = Item.objects.select_for_update().get(pk=item_id)
+    field = FIELD[kind]
+    now = timezone.now()
+    current = getattr(item, field)
+    starts_at = current if current and current > now else now
+    ends_at = starts_at + timedelta(days=days)
+    setattr(item, field, ends_at)
+    item.save(update_fields=[field, 'updated_at'])
+    Promotion.objects.create(item=item, kind=kind, starts_at=starts_at, ends_at=ends_at, order=order)
+    return item, ends_at
+
+
+@transaction.atomic
+def stop_promotion(item_id, kind):
+    """Снять продвижение сейчас. True — было действующее."""
+    from apps.catalog.models import Item
+
+    item = Item.objects.select_for_update().get(pk=item_id)
+    field = FIELD[kind]
+    now = timezone.now()
+    current = getattr(item, field)
+    if not current or current <= now:
+        return False
+    setattr(item, field, now)
+    item.save(update_fields=[field, 'updated_at'])
+    Promotion.objects.filter(item=item, kind=kind, ends_at__gt=now).update(ends_at=now)
+    return True

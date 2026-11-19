@@ -90,6 +90,28 @@ def extend_subscription(user, plan: Plan, *, days=None, source=SubscriptionPerio
     return subscription
 
 
+@transaction.atomic
+def end_subscription(user, *, created_by=None, comment=''):
+    """
+    Сотрудник завершает тариф досрочно: подписка и открытый период в истории
+    заканчиваются сейчас. Перевод на FREE (снятие лишних объявлений,
+    уведомление) делает tasks.expire_one — его вызывает тот, кто завершил,
+    после коммита. Возвращает подписку или None, если тариф и так не действовал.
+    """
+    now = timezone.now()
+    subscription = Subscription.objects.select_for_update().filter(user=user, ends_at__gt=now).first()
+    if subscription is None:
+        return None
+    note = 'Завершён досрочно' + (f' ({created_by})' if created_by else '') + (f': {comment}' if comment else '')
+    for period in SubscriptionPeriod.objects.filter(user=user, ends_at__gt=now):
+        period.ends_at = max(now, period.starts_at)
+        period.comment = f'{period.comment}; {note}'[:300] if period.comment else note[:300]
+        period.save(update_fields=['ends_at', 'comment'])
+    subscription.ends_at = now
+    subscription.save(update_fields=['ends_at', 'updated_at'])
+    return subscription
+
+
 def upgrade_credit(old_plan, new_plan, remaining):
     """
     Сколько времени нового тарифа стоит неиспользованный остаток старого:

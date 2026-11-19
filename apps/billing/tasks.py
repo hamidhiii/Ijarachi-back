@@ -20,31 +20,35 @@ def expire_subscriptions():
     уходят в «неактивные» (не удаляются), пользователь получает уведомление.
     """
     from .models import Subscription
-    from .plans import free_plan
-    from .services import _notify, pause_listings_over_limit
 
     now = timezone.now()
     due = Subscription.objects.filter(ends_at__lte=now).exclude(expiry_processed_for=F('ends_at'))
-    processed = 0
-    for subscription_id in due.values_list('pk', flat=True):
-        with transaction.atomic():
-            subscription = Subscription.objects.select_for_update().select_related('plan', 'user').get(pk=subscription_id)
-            if subscription.ends_at > timezone.now() or subscription.expiry_processed_for == subscription.ends_at:
-                continue  # продлили или уже обработали параллельно
-            free = free_plan()
-            paused = pause_listings_over_limit(subscription.user, free)
-            subscription.expiry_processed_for = subscription.ends_at
-            subscription.save(update_fields=['expiry_processed_for', 'updated_at'])
-            message = f'Тариф {subscription.plan.name} закончился, аккаунт переведён на {free.name}.'
-            if paused:
-                message += (
-                    f' {paused} объявл. сверх лимита {free.listing_limit} сняты с публикации, но не удалены —'
-                    ' вернутся сами после оплаты тарифа.'
-                )
-            _notify(subscription.user, 'Тариф закончился', message)
-            processed += 1
-            logger.info('Subscription #%s expired, %s listings paused', subscription.pk, paused)
-    return processed
+    return sum(expire_one(subscription_id) for subscription_id in due.values_list('pk', flat=True))
+
+
+def expire_one(subscription_id):
+    """Одна закончившаяся подписка: снять лишние объявления, уведомить. 1 — обработана, 0 — нечего делать."""
+    from .models import Subscription
+    from .plans import free_plan
+    from .services import _notify, pause_listings_over_limit
+
+    with transaction.atomic():
+        subscription = Subscription.objects.select_for_update().select_related('plan', 'user').get(pk=subscription_id)
+        if subscription.ends_at > timezone.now() or subscription.expiry_processed_for == subscription.ends_at:
+            return 0  # продлили или уже обработали параллельно
+        free = free_plan()
+        paused = pause_listings_over_limit(subscription.user, free)
+        subscription.expiry_processed_for = subscription.ends_at
+        subscription.save(update_fields=['expiry_processed_for', 'updated_at'])
+        message = f'Тариф {subscription.plan.name} закончился, аккаунт переведён на {free.name}.'
+        if paused:
+            message += (
+                f' {paused} объявл. сверх лимита {free.listing_limit} сняты с публикации, но не удалены —'
+                ' вернутся сами после оплаты тарифа.'
+            )
+        _notify(subscription.user, 'Тариф закончился', message)
+        logger.info('Subscription #%s expired, %s listings paused', subscription.pk, paused)
+    return 1
 
 
 @shared_task
