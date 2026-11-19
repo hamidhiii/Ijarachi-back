@@ -14,6 +14,7 @@ from django.utils.dateparse import parse_date
 from drf_spectacular.utils import OpenApiParameter, extend_schema
 from rest_framework import generics, status
 from rest_framework.exceptions import NotFound
+from rest_framework.parsers import FormParser, MultiPartParser
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
@@ -233,6 +234,58 @@ class OwnerListingPublishView(OwnerAccountMixin, APIView):
         return Response(OwnerListingSerializer(item, context={'account': self.account, 'request': request}).data)
 
 
+class OwnerListingPhotosView(OwnerAccountMixin, APIView):
+    """
+    POST /owner/listings/{id}/photos/ (multipart `image`) — добавить фото товара, до 10.
+    DELETE /owner/listings/{id}/photos/{photo_id}/ — удалить. Как и на rentoo.uz:
+    новое фото у одобренного объявления отправляет его на повторную модерацию.
+    """
+    parser_classes = [MultiPartParser, FormParser]
+    MAX_PHOTOS = 10
+
+    def _item(self, pk):
+        item = Item.objects.filter(owner=self.account, pk=pk).first()
+        if item is None:
+            raise NotFound('Товар не найден.')
+        return item
+
+    def _answer(self, request, item):
+        item = Item.objects.prefetch_related('images').get(pk=item.pk)
+        today = timezone.localdate()
+        item.free_today = free_units(item, today, today)
+        return OwnerListingSerializer(item, context={'account': self.account, 'request': request}).data
+
+    @extend_schema(request=None, responses=OwnerListingSerializer)
+    def post(self, request, pk):
+        from apps.catalog.serializers import ItemImageUploadSerializer
+
+        item = self._item(pk)
+        if item.images.count() >= self.MAX_PHOTOS:
+            raise CrmError('TOO_MANY_PHOTOS', f'Максимум {self.MAX_PHOTOS} фото.')
+        serializer = ItemImageUploadSerializer(data={'image': request.data.get('image'), 'order': item.images.count()})
+        serializer.is_valid(raise_exception=True)
+        serializer.save(item=item)
+        if item.status == Item.STATUS_APPROVED:
+            item.status = Item.STATUS_PENDING
+            item.save(update_fields=['status', 'updated_at'])
+        return Response(self._answer(request, item), status=status.HTTP_201_CREATED)
+
+    @extend_schema(responses=OwnerListingSerializer)
+    def delete(self, request, pk, photo_id):
+        item = self._item(pk)
+        image = item.images.filter(pk=photo_id).first()
+        if image is None:
+            raise NotFound('Фото не найдено.')
+        was_primary = image.is_primary
+        image.delete()
+        if was_primary:
+            first = item.images.order_by('order', 'pk').first()
+            if first:
+                first.is_primary = True
+                first.save(update_fields=['is_primary'])
+        return Response(self._answer(request, item))
+
+
 class ListingCalendarView(OwnerAccountMixin, APIView):
     """
     GET /owner/listings/{id}/calendar/?from=&to= — по дням: занято, свободно,
@@ -271,6 +324,11 @@ class ListingCalendarView(OwnerAccountMixin, APIView):
         })
 
 
+def _main_photo(request, item):
+    images = sorted(item.images.all(), key=lambda i: (not i.is_primary, i.order, i.pk))
+    return request.build_absolute_uri(images[0].image.url) if images and images[0].image else None
+
+
 class StockView(OwnerAccountMixin, APIView):
     """
     GET /owner/stock/?date= или ?from=&to=[&branch=] — остатки: свободно =
@@ -284,7 +342,10 @@ class StockView(OwnerAccountMixin, APIView):
         start = day or _parse_day(request.query_params.get('from'), today)
         end = day or _parse_day(request.query_params.get('to'), start)
         date_range(start, end, limit_days=366)
-        items = Item.objects.filter(owner=self.account).exclude(status__in=[Item.STATUS_REJECTED, Item.STATUS_INACTIVE]).order_by('title', 'pk')
+        items = (
+            Item.objects.filter(owner=self.account).exclude(status__in=[Item.STATUS_REJECTED, Item.STATUS_INACTIVE])
+            .prefetch_related('images').order_by('title', 'pk')
+        )
         if request.query_params.get('branch'):
             items = items.filter(branch_id=request.query_params['branch'])
         rows = []
@@ -292,6 +353,7 @@ class StockView(OwnerAccountMixin, APIView):
             free = free_units(item, start, end)
             rows.append({
                 'id': item.pk, 'title': item.title, 'branch': item.branch_id, 'status': item.status,
+                'photo': _main_photo(request, item),
                 'quantity': item.quantity, 'booked': item.quantity - free, 'free': free,
             })
         return Response(StockRowSerializer(rows, many=True).data)

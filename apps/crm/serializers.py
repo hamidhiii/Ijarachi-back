@@ -114,6 +114,11 @@ class ClientDetailSerializer(ClientSerializer):
         return ReservationSerializer(reservations, many=True, context=self.context).data
 
 
+class ProductPhotoSerializer(serializers.Serializer):
+    id = serializers.IntegerField()
+    url = serializers.URLField()
+
+
 class OwnerListingSerializer(serializers.ModelSerializer):
     """
     Товар в кабинете. Новый — «только в кабинете» (status=crm): название,
@@ -128,7 +133,8 @@ class OwnerListingSerializer(serializers.ModelSerializer):
     )
     free_today = serializers.IntegerField(read_only=True)
     in_catalog = serializers.SerializerMethodField(help_text='Видно ли на rentoo.uz (одобрено)')
-    photo = serializers.SerializerMethodField()
+    photo = serializers.SerializerMethodField(help_text='Главное фото')
+    photos = serializers.SerializerMethodField()
 
     MODERATED = ('title', 'description', 'category', 'address', 'city')
 
@@ -136,7 +142,7 @@ class OwnerListingSerializer(serializers.ModelSerializer):
         model = Item
         fields = [
             'id', 'title', 'status', 'quantity', 'price_per_day', 'deposit', 'description',
-            'category', 'address', 'city', 'branch', 'free_today', 'in_catalog', 'photo',
+            'category', 'address', 'city', 'branch', 'free_today', 'in_catalog', 'photo', 'photos',
         ]
         read_only_fields = ['id', 'status']
         extra_kwargs = {
@@ -155,13 +161,21 @@ class OwnerListingSerializer(serializers.ModelSerializer):
     def get_in_catalog(self, obj):
         return obj.status == Item.STATUS_APPROVED
 
-    @extend_schema_field(serializers.URLField(allow_null=True))
-    def get_photo(self, obj):
-        image = next(iter(sorted(obj.images.all(), key=lambda i: (not i.is_primary, i.order, i.pk))), None)
-        if image is None or not image.image:
-            return None
+    def _images(self, obj):
+        return sorted(obj.images.all(), key=lambda i: (not i.is_primary, i.order, i.pk))
+
+    def _url(self, image):
         request = self.context.get('request')
         return request.build_absolute_uri(image.image.url) if request else image.image.url
+
+    @extend_schema_field(serializers.URLField(allow_null=True))
+    def get_photo(self, obj):
+        image = next(iter(self._images(obj)), None)
+        return self._url(image) if image is not None and image.image else None
+
+    @extend_schema_field(ProductPhotoSerializer(many=True))
+    def get_photos(self, obj):
+        return [{'id': image.pk, 'url': self._url(image)} for image in self._images(obj) if image.image]
 
     def validate_price_per_day(self, value):
         if value <= 0:
@@ -218,6 +232,7 @@ class StockRowSerializer(serializers.Serializer):
     id = serializers.IntegerField()
     title = serializers.CharField()
     status = serializers.CharField(help_text='crm — только в кабинете; pending/approved — на Rentoo')
+    photo = serializers.URLField(allow_null=True)
     branch = serializers.IntegerField(allow_null=True)
     quantity = serializers.IntegerField()
     booked = serializers.IntegerField()

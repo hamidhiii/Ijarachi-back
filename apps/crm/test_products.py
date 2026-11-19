@@ -77,6 +77,35 @@ class ProductTests(APITestCase):
         self.assertEqual(self.client.patch(url, {'title': 'Другое'}, format='json').status_code, 400)
         self.assertEqual(self.client.patch(url, {'quantity': 10}, format='json').json()['quantity'], 10)
 
+    def test_photos_add_and_remove(self):
+        import tempfile
+
+        from django.core.files.uploadedfile import SimpleUploadedFile
+
+        gif = (b'GIF87a\x01\x00\x01\x00\x80\x01\x00\x00\x00\x00\xff\xff\xff,'
+               b'\x00\x00\x00\x00\x01\x00\x01\x00\x00\x02\x02L\x01\x00;')
+        with self.settings(MEDIA_ROOT=tempfile.mkdtemp()):
+            item_id = self.create().json()['id']
+            url = reverse('owner-listing-photos', args=[item_id])
+            for name in ('a.gif', 'b.gif'):
+                response = self.client.post(url, {'image': SimpleUploadedFile(name, gif, content_type='image/gif')},
+                                            format='multipart')
+                self.assertEqual(response.status_code, 201, response.content)
+            photos = response.json()['photos']
+            self.assertEqual(len(photos), 2)
+            self.assertEqual(response.json()['status'], 'crm')  # товар из кабинета на модерацию не уходит
+            self.assertTrue(self.client.get(reverse('owner-stock')).json()[0]['photo'])
+
+            first = photos[0]['id']
+            response = self.client.delete(reverse('owner-listing-photo', args=[item_id, first]))
+            self.assertEqual([p['id'] for p in response.json()['photos']], [photos[1]['id']])
+
+            approved = make_item(self.owner)
+            response = self.client.post(reverse('owner-listing-photos', args=[approved.pk]),
+                                        {'image': SimpleUploadedFile('c.gif', gif, content_type='image/gif')},
+                                        format='multipart')
+            self.assertEqual(response.json()['status'], 'pending')  # новое фото — повторная модерация
+
     def test_viewer_cannot_create(self):
         from apps.crm.models import StaffMember
 
