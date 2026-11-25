@@ -108,7 +108,8 @@ def handle_reply(message):
         reply += ' Человек без аккаунта увидит ответ на странице «Поддержка» с того же устройства.'
         if ticket.phone:
             reply += f' Телефон: {ticket.phone}'
-    _api('sendMessage', {'chat_id': chat_id, 'text': reply, 'reply_to_message_id': message.get('message_id')})
+    _api('sendMessage', {'chat_id': chat_id, 'text': reply, 'reply_parameters': {
+        'message_id': message.get('message_id'), 'allow_sending_without_reply': True}})
     return True
 
 
