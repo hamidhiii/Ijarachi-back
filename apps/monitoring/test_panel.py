@@ -139,3 +139,41 @@ class PanelTests(APITestCase):
         self.client.post(reverse('panel-kyc-decision', args=[doc.pk]), {'action': 'approve'}, format='json')
         doc.refresh_from_db()
         self.assertEqual(doc.status, PassportDocument.STATUS_VERIFIED)
+
+
+@override_settings(CRM_BOT_TOKEN='123:test', SUPPORT_TELEGRAM_CHAT_IDS='5001')
+class PanelSupportTests(APITestCase):
+    staff = PanelTests.staff
+
+    def test_support_list_reply_and_close(self):
+        from unittest import mock
+
+        from apps.crm import telegram as crm_bot
+        from apps.support.models import SupportMessage, SupportTelegramMessage, SupportTicket
+
+        customer = make_user()
+        ticket = SupportTicket.objects.create(user=customer, source='owner')
+        SupportMessage.objects.create(ticket=ticket, text='Не могу добавить товар')
+
+        self.staff('moderator')  # support: view
+        listing = self.client.get(reverse('panel-support'), {'status': 'active'}).json()
+        self.assertEqual((listing['count'], listing['waiting']), (1, 1))
+        self.assertEqual(listing['results'][0]['last_text'], 'Не могу добавить товар')
+        denied = self.client.post(reverse('panel-support-reply', args=[ticket.pk]), {'text': 'x'}, format='json')
+        self.assertEqual(denied.status_code, 403)
+
+        self.staff('support')  # support: edit
+        with mock.patch.object(crm_bot, 'api', return_value={'message_id': 77}) as api, \
+                mock.patch('apps.notifications.tasks.create_notification') as notify:
+            with self.captureOnCommitCallbacks(execute=True):
+                detail = self.client.post(reverse('panel-support-reply', args=[ticket.pk]),
+                                          {'text': 'Откройте «Остатки» → «Добавить»'}, format='json').json()
+        self.assertEqual([m['from_staff'] for m in detail['messages_list']], [False, True])
+        self.assertEqual(detail['status'], 'answered')
+        notify.assert_called_once()
+        self.assertEqual(api.call_args[0][1]['chat_id'], 5001)
+        self.assertTrue(SupportTelegramMessage.objects.filter(ticket=ticket, message_id=77).exists())
+
+        closed = self.client.post(reverse('panel-support-status', args=[ticket.pk]), {'status': 'closed'}, format='json')
+        self.assertEqual(closed.json()['status'], 'closed')
+        self.assertTrue(AuditLog.objects.filter(action='panel.support.close').exists())

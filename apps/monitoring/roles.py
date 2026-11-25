@@ -18,6 +18,7 @@ SECTIONS = [
     ('payments', 'Платежи и выручка', 'Видеть деньги; менять — отмечать заказы оплаченными, отменять'),
     ('deals', 'Сделки и споры', 'Менять — закрывать споры (сколько залога удержать)'),
     ('kyc', 'Проверка личности', 'Паспорта; менять — подтверждать и отклонять'),
+    ('support', 'Техподдержка', 'Обращения с сайта и кабинета; менять — отвечать и закрывать'),
     ('staff', 'Сотрудники и роли', 'Менять — добавлять сотрудников, роли и пароли'),
 ]
 SECTION_KEYS = [key for key, _label, _hint in SECTIONS]
@@ -29,8 +30,8 @@ def _all(level, **overrides):
 
 ROLES = {
     'viewer': ('Наблюдатель', _all(VIEW, staff=NONE)),
-    'moderator': ('Модератор', _all(NONE, analytics=VIEW, users=VIEW, listings=EDIT, kyc=EDIT)),
-    'support': ('Поддержка', _all(VIEW, users=EDIT, payments=NONE, staff=NONE)),
+    'moderator': ('Модератор', _all(NONE, analytics=VIEW, users=VIEW, listings=EDIT, kyc=EDIT, support=VIEW)),
+    'support': ('Поддержка', _all(VIEW, users=EDIT, payments=NONE, staff=NONE, support=EDIT)),
     'finance': ('Финансы', _all(VIEW, payments=EDIT, billing=EDIT, deals=EDIT, listings=VIEW, staff=NONE)),
     'admin': ('Администратор', _all(EDIT)),
 }

@@ -82,6 +82,32 @@ def notify_user(ticket, text):
     }))
 
 
+@transaction.atomic
+def staff_reply(ticket, text, staff_name):
+    """Ответ поддержки в обращение — из Telegram или из панели."""
+    message = SupportMessage.objects.create(ticket=ticket, text=text[:4000], from_staff=True, staff_name=staff_name)
+    ticket.status = SupportTicket.STATUS_ANSWERED
+    ticket.save(update_fields=['status', 'updated_at'])
+    notify_user(ticket, text)
+    return message
+
+
+def tell_agents(ticket, text):
+    """Ответ из панели — сотрудникам в Telegram, чтобы переписка там была полной."""
+    def send():
+        for chat_id in agent_chat_ids():
+            try:
+                result = _api('sendMessage', {'chat_id': chat_id, 'text': f'🖥 Ответ из панели в #{ticket.pk}:\n\n{text}'[:4000]})
+            except Exception:
+                logger.exception('Support: could not mirror panel reply to %s', chat_id)
+                continue
+            message_id = (result or {}).get('message_id')
+            if message_id:
+                SupportTelegramMessage.objects.get_or_create(chat_id=chat_id, message_id=message_id,
+                                                             defaults={'ticket': ticket})
+    transaction.on_commit(send)
+
+
 def handle_reply(message):
     """Реплай сотрудника на карточку обращения. True — сообщение обработано."""
     chat_id = (message.get('chat') or {}).get('id')
@@ -98,11 +124,7 @@ def handle_reply(message):
         _api('sendMessage', {'chat_id': chat_id, 'text': 'Пока можно ответить только текстом.'})
         return True
     ticket = link.ticket
-    with transaction.atomic():
-        SupportMessage.objects.create(ticket=ticket, text=text[:4000], from_staff=True, staff_name=_staff_name(sender))
-        ticket.status = SupportTicket.STATUS_ANSWERED
-        ticket.save(update_fields=['status', 'updated_at'])
-        notify_user(ticket, text)
+    staff_reply(ticket, text, _staff_name(sender))
     reply = f'✅ Отправлено в обращение #{ticket.pk}.'
     if not ticket.user_id:
         reply += ' Человек без аккаунта увидит ответ на странице «Поддержка» с того же устройства.'

@@ -16,6 +16,8 @@
     GET  kyc/?status=  GET kyc/<id>/image/<side>/  POST kyc/<id>/ {action, reason} [kyc]
     GET  staff/  POST staff/  PATCH staff/<id>/  DELETE staff/<id>/        [staff]
     GET  audit/                            журнал действий                   [staff: view]
+    GET  support/?status=&q=  GET support/<id>/                            [support: view]
+    POST support/<id>/reply/ {text}  POST support/<id>/status/ {status: open|closed} [support: edit]
 """
 from decimal import Decimal, InvalidOperation
 
@@ -648,3 +650,110 @@ class AuditView(MonitorView):
             'id': a.pk, 'who': a.user.phone if a.user_id else '', 'action': a.action[len('panel.'):],
             'details': a.metadata, 'at': _iso(a.created_at),
         })
+
+
+# ─── Техподдержка ───────────────────────────────────────────────────────────
+
+def _ticket_row(ticket):
+    last = ticket.last_message
+    return {
+        'id': ticket.pk, 'who': ticket.who(), 'user': ticket.user_id, 'phone': ticket.user.phone if ticket.user_id else ticket.phone,
+        'source': ticket.source, 'source_label': ticket.get_source_display(),
+        'status': ticket.status, 'status_label': ticket.get_status_display(),
+        'last_text': (last.text[:160] if last else ''), 'last_from_staff': bool(last and last.from_staff),
+        'messages': ticket.message_count, 'created': _iso(ticket.created_at), 'updated': _iso(ticket.updated_at),
+    }
+
+
+def _tickets():
+    from django.db.models import Count, Prefetch
+
+    from apps.support.models import SupportMessage, SupportTicket
+
+    return SupportTicket.objects.select_related('user__profile').annotate(message_count=Count('messages')).prefetch_related(
+        Prefetch('messages', queryset=SupportMessage.objects.order_by('-created_at'), to_attr='latest'))
+
+
+def _with_last(ticket):
+    ticket.last_message = ticket.latest[0] if getattr(ticket, 'latest', None) else None
+    return ticket
+
+
+class SupportListView(MonitorView):
+    section = 'support'
+
+    def get(self, request):
+        from django.db.models import Q
+
+        from apps.support.models import SupportTicket
+
+        qs = _tickets().order_by('-updated_at')
+        status = request.query_params.get('status')
+        if status == 'active':
+            qs = qs.exclude(status=SupportTicket.STATUS_CLOSED)
+        elif status:
+            qs = qs.filter(status=status)
+        q = request.query_params.get('q', '').strip()
+        if q:
+            qs = qs.filter(Q(phone__icontains=q) | Q(name__icontains=q) | Q(user__phone__icontains=q)
+                           | Q(user__profile__full_name__icontains=q) | Q(messages__text__icontains=q)).distinct()
+        response = _page(request, qs, lambda t: _ticket_row(_with_last(t)))
+        response.data['waiting'] = SupportTicket.objects.filter(status=SupportTicket.STATUS_OPEN).count()
+        return response
+
+
+def _ticket_detail(ticket):
+    data = _ticket_row(_with_last(ticket))
+    data['page'] = ticket.page
+    data['messages_list'] = [
+        {'id': m.pk, 'text': m.text, 'from_staff': m.from_staff, 'staff_name': m.staff_name, 'at': _iso(m.created_at)}
+        for m in sorted(ticket.latest, key=lambda m: m.created_at)
+    ]
+    return data
+
+
+def _get_ticket(pk):
+    ticket = _tickets().filter(pk=pk).first()
+    if ticket is None:
+        raise NotFound('Обращение не найдено.')
+    return ticket
+
+
+class SupportDetailView(MonitorView):
+    section = 'support'
+
+    def get(self, request, pk):
+        return Response(_ticket_detail(_get_ticket(pk)))
+
+
+class SupportReplyView(MonitorView):
+    section = 'support'
+
+    def post(self, request, pk):
+        from apps.support import telegram as support_bot
+
+        ticket = _get_ticket(pk)
+        text = str(request.data.get('text') or '').strip()
+        if not text:
+            raise ValidationError({'text': 'Напишите ответ.'})
+        profile = getattr(request.user, 'profile', None)
+        name = getattr(profile, 'full_name', '') or 'Поддержка Rentoo'
+        support_bot.staff_reply(ticket, text, name)
+        support_bot.tell_agents(ticket, text)
+        audit(request, 'support.reply', ticket=ticket.pk)
+        return Response(_ticket_detail(_get_ticket(pk)))
+
+
+class SupportStatusView(MonitorView):
+    section = 'support'
+
+    def post(self, request, pk):
+        from apps.support.models import SupportTicket
+
+        ticket = _get_ticket(pk)
+        value = request.data.get('status')
+        if value not in (SupportTicket.STATUS_OPEN, SupportTicket.STATUS_CLOSED):
+            raise ValidationError({'status': 'open или closed.'})
+        SupportTicket.objects.filter(pk=ticket.pk).update(status=value, updated_at=timezone.now())
+        audit(request, f'support.{"close" if value == "closed" else "reopen"}', ticket=ticket.pk)
+        return Response(_ticket_detail(_get_ticket(pk)))

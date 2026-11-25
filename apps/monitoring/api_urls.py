@@ -39,6 +39,11 @@ urlpatterns = [
     path('kyc/<int:pk>/', panel.KycDecisionView.as_view(), name='panel-kyc-decision'),
     path('kyc/<int:pk>/image/<str:side>/', panel.KycImageView.as_view(), name='panel-kyc-image'),
 
+    path('support/', panel.SupportListView.as_view(), name='panel-support'),
+    path('support/<int:pk>/', panel.SupportDetailView.as_view(), name='panel-support-ticket'),
+    path('support/<int:pk>/reply/', panel.SupportReplyView.as_view(), name='panel-support-reply'),
+    path('support/<int:pk>/status/', panel.SupportStatusView.as_view(), name='panel-support-status'),
+
     path('staff/', panel.StaffView.as_view(), name='panel-staff'),
     path('staff/<int:pk>/', panel.StaffDetailView.as_view(), name='panel-staff-detail'),
     path('audit/', panel.AuditView.as_view(), name='panel-audit'),
