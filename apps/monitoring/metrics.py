@@ -94,7 +94,12 @@ def overview(days, access):
     active_users = presence.unique_over('hll:u', start, today)
     active_users_prev = presence.unique_over('hll:u', prev_start, prev_end)
 
+    from apps.billing.promo import promo_user_ids
+
+    # Подарок по акции — не оплата: в платящих и MRR его нет, у него своя цифра.
+    promo_now = Subscription.objects.filter(ends_at__gt=now, user_id__in=promo_user_ids(now)).count()
     paying_now = (Subscription.objects.filter(ends_at__gt=now).exclude(plan__code=Plan.FREE)
+                  .exclude(user_id__in=promo_user_ids(now))
                   .values('plan__code').annotate(n=Count('id')))
     paying = {row['plan__code']: row['n'] for row in paying_now}
     plans = list(Plan.objects.order_by('rank'))
@@ -130,6 +135,7 @@ def overview(days, access):
         _kpi('reservations', 'Брони в CRM', res, res_prev, series=series['reservations'], group='crm'),
         _kpi('crm_products', 'Товары только в CRM', items.filter(status=Item.STATUS_CRM).count(), group='crm'),
         _kpi('paying', 'Платящие сейчас', sum(paying.values()), group='billing'),
+        _kpi('promo', 'PRO по акции', promo_now, group='billing', hint='Подарок при регистрации, не оплата'),
     ]
 
     if money:
@@ -168,7 +174,8 @@ def overview(days, access):
         'deals_by_status': _breakdown(deals.values_list('status').annotate(n=Count('id')), Booking.STATUS_CHOICES),
         'users_by_type': _breakdown(Profile.objects.values_list('account_type').annotate(n=Count('id')),
                                     Profile.ACCOUNT_TYPE_CHOICES),
-        'plans': [{'key': 'free', 'label': 'FREE', 'value': max(users.count() - sum(paying.values()), 0)}] + [
+        'plans': [{'key': 'free', 'label': 'FREE', 'value': max(users.count() - sum(paying.values()) - promo_now, 0)},
+                  {'key': 'promo', 'label': 'PRO по акции', 'value': promo_now}] + [
             {'key': plan.code, 'label': plan.name, 'value': paying.get(plan.code, 0)}
             for plan in plans if plan.is_paid
         ],

@@ -14,6 +14,9 @@ MYID_MODE = 'stub'
 # Тесты сделки (блоки 1–2) идут со включённой сделкой; поведение при
 # выключенном флаге проверяет apps/bookings/test_deal_flow_flag.py.
 DEAL_FLOW_ENABLED = True
+# Акция «PRO при регистрации» выключена: тесты ждут новых пользователей на FREE.
+# Саму акцию проверяет apps/billing/test_promo.py (override_settings).
+PROMO_FREE_PRO_UNTIL = ''
 
 CACHES = {'default': {'BACKEND': 'django.core.cache.backends.locmem.LocMemCache'}}
 CHANNEL_LAYERS = {'default': {'BACKEND': 'channels.layers.InMemoryChannelLayer'}}

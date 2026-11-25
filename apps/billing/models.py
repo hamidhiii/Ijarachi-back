@@ -84,9 +84,12 @@ class Subscription(models.Model):
 class SubscriptionPeriod(models.Model):
     SOURCE_PAYMENT = 'payment'
     SOURCE_MANUAL = 'manual'
+    # Подарок по акции (apps.billing.promo) — не оплата: в платящих и MRR не считается.
+    SOURCE_PROMO = 'promo'
     SOURCE_CHOICES = [
         (SOURCE_PAYMENT, 'Оплата'),
         (SOURCE_MANUAL, 'Вручную (сотрудник)'),
+        (SOURCE_PROMO, 'Акция'),
     ]
 
     user = models.ForeignKey(

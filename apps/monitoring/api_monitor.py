@@ -192,6 +192,10 @@ class UsersView(MonitorView):
         now = timezone.now()
         if plan == 'free':
             qs = qs.exclude(subscription__ends_at__gt=now)
+        elif plan == 'promo':
+            from apps.billing.promo import promo_user_ids
+
+            qs = qs.filter(pk__in=promo_user_ids(now))
         elif plan:
             qs = qs.filter(subscription__plan__code=plan, subscription__ends_at__gt=now)
         subs = {}
@@ -207,6 +211,7 @@ class UsersView(MonitorView):
                 'shop': getattr(profile, 'shop_name', '') or '',
                 'type': getattr(profile, 'account_type', ''), 'verified': bool(getattr(profile, 'is_verified_kyc', False)),
                 'plan': sub.plan.code if sub else 'free', 'plan_until': sub.ends_at.isoformat() if sub else None,
+                'plan_promo': user.pk in promo_ids,
                 'listings': user.items.exclude(status='crm').count(),
                 'joined': user.date_joined.isoformat(),
                 'last_login': user.last_login.isoformat() if user.last_login else None,
@@ -216,6 +221,9 @@ class UsersView(MonitorView):
 
         page_ids = list(qs.values_list('pk', flat=True)[_offset(request): _offset(request) + PAGE])
         seen = presence.last_seen(page_ids)
+        from apps.billing.promo import promo_user_ids
+
+        promo_ids = set(promo_user_ids().filter(user_id__in=page_ids).values_list('user_id', flat=True))
         return _page(request, qs, row)
 
 

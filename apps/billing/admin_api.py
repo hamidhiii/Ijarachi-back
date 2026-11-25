@@ -155,7 +155,8 @@ def _paying_at(moment):
     """id пользователей, у которых в момент moment действовал платный период."""
     return set(
         SubscriptionPeriod.objects.filter(starts_at__lte=moment, ends_at__gt=moment)
-        .exclude(plan__code=Plan.FREE).values_list('user_id', flat=True)
+        .exclude(plan__code=Plan.FREE).exclude(source=SubscriptionPeriod.SOURCE_PROMO)
+        .values_list('user_id', flat=True)
     )
 
 
@@ -172,7 +173,11 @@ class AdminMetricsView(APIView):
             days = 30
         since = now - timedelta(days=days)
 
-        active = Subscription.objects.filter(ends_at__gt=now).exclude(plan__code=Plan.FREE)
+        from .promo import promo_user_ids
+
+        # PRO по акции — подарок, не платящий.
+        active = (Subscription.objects.filter(ends_at__gt=now).exclude(plan__code=Plan.FREE)
+                  .exclude(user_id__in=promo_user_ids(now)))
         by_plan = {code: 0 for code in (Plan.START, Plan.BUSINESS, Plan.PRO)}
         mrr = 0
         for code, price, count in active.values_list('plan__code', 'plan__price').annotate(n=Count('pk')):
@@ -187,7 +192,7 @@ class AdminMetricsView(APIView):
         revenue = paid_orders.values('kind').annotate(total=Sum('amount'))
         revenue_by_kind = {row['kind']: int(row['total']) for row in revenue}
         first_paid = (
-            SubscriptionPeriod.objects.exclude(plan__code=Plan.FREE)
+            SubscriptionPeriod.objects.exclude(plan__code=Plan.FREE).exclude(source=SubscriptionPeriod.SOURCE_PROMO)
             .values('user_id').annotate(first=Min('starts_at')).filter(first__gte=since).count()
         )
         return Response(MetricsSerializer({
