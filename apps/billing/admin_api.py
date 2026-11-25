@@ -175,7 +175,7 @@ class AdminMetricsView(APIView):
 
         from .promo import promo_user_ids
 
-        # PRO по акции — подарок, не платящий.
+        # Тариф по акции — подарок, не платящий.
         active = (Subscription.objects.filter(ends_at__gt=now).exclude(plan__code=Plan.FREE)
                   .exclude(user_id__in=promo_user_ids(now)))
         by_plan = {code: 0 for code in (Plan.START, Plan.BUSINESS, Plan.PRO)}

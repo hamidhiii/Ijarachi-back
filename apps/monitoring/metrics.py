@@ -135,7 +135,7 @@ def overview(days, access):
         _kpi('reservations', 'Брони в CRM', res, res_prev, series=series['reservations'], group='crm'),
         _kpi('crm_products', 'Товары только в CRM', items.filter(status=Item.STATUS_CRM).count(), group='crm'),
         _kpi('paying', 'Платящие сейчас', sum(paying.values()), group='billing'),
-        _kpi('promo', 'PRO по акции', promo_now, group='billing', hint='Подарок при регистрации, не оплата'),
+        _kpi('promo', 'Тариф по акции', promo_now, group='billing', hint='Подарок при регистрации, не оплата'),
     ]
 
     if money:
@@ -175,7 +175,7 @@ def overview(days, access):
         'users_by_type': _breakdown(Profile.objects.values_list('account_type').annotate(n=Count('id')),
                                     Profile.ACCOUNT_TYPE_CHOICES),
         'plans': [{'key': 'free', 'label': 'FREE', 'value': max(users.count() - sum(paying.values()) - promo_now, 0)},
-                  {'key': 'promo', 'label': 'PRO по акции', 'value': promo_now}] + [
+                  {'key': 'promo', 'label': 'Тариф по акции', 'value': promo_now}] + [
             {'key': plan.code, 'label': plan.name, 'value': paying.get(plan.code, 0)}
             for plan in plans if plan.is_paid
         ],

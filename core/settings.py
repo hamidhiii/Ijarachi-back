@@ -356,7 +356,7 @@ TIME_ZONE = 'Asia/Tashkent'
 
 # Акция: каждому новому пользователю PRO бесплатно до конца этого дня (apps.billing.promo).
 # Пусто — акции нет.
-PROMO_FREE_PRO_UNTIL = config('PROMO_FREE_PRO_UNTIL', default='2027-02-28')
+PROMO_FREE_PRO_UNTIL = config('PROMO_FREE_PRO_UNTIL', default='2027-01-31')
 USE_I18N = True
 USE_TZ = True
 
