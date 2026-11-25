@@ -38,6 +38,9 @@ class CrmBotWebhookView(APIView):
         message = update.get('message') or {}
         chat = message.get('chat') or {}
         text = message.get('text') or ''
+        if chat.get('type') == 'private' and chat.get('id') and message.get('contact'):
+            bot.handle_contact(chat['id'], message.get('from') or {}, message['contact'])
+            return HttpResponse(status=200)
         if chat.get('type') != 'private' or not chat.get('id') or not text:
             return HttpResponse(status=200)
         sender = message.get('from') or {}

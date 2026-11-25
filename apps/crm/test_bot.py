@@ -225,3 +225,40 @@ class TodayAndReminderTests(CrmBotTestCase):
         self.reservation()
         self.assertEqual(tasks.remind_reservations(), 1)
         self.assertFalse(self.sent('sendMessage'))
+
+
+class ContactLinkTests(CrmBotTestCase):
+    """«Поделиться номером» в CRM-боте связывает Telegram с аккаунтом без кабинета."""
+
+    def contact(self, phone, sender=CHAT, owner_id=None):
+        return self.webhook({'message': {
+            'message_id': 3, 'chat': {'id': CHAT, 'type': 'private'},
+            'from': {'id': sender, 'language_code': 'ru', 'username': 'boss'},
+            'contact': {'phone_number': phone, 'user_id': sender if owner_id is None else owner_id},
+        }})
+
+    def test_start_unlinked_asks_for_the_number(self):
+        self.webhook({'message': {'chat': {'id': CHAT, 'type': 'private'},
+                                  'from': {'id': CHAT, 'language_code': 'ru'}, 'text': '/start'}})
+        markup = self.sent('sendMessage')[-1]['reply_markup']
+        self.assertTrue(markup['keyboard'][0][0]['request_contact'])
+
+    def test_own_contact_links_existing_account(self):
+        self.contact('+' + self.owner.phone.lstrip('+'))
+        link = CrmBotLink.objects.get(chat_id=CHAT)
+        self.assertEqual(link.user, self.owner)
+        self.assertEqual(link.username, 'boss')
+
+        from apps.users.telegram_webapp import crm_user_for
+        self.assertEqual(crm_user_for(CHAT), self.owner)
+
+    def test_new_number_creates_account(self):
+        from django.contrib.auth import get_user_model
+
+        self.contact('998901112233')
+        user = get_user_model().objects.get(crm_bot_link__chat_id=CHAT)
+        self.assertTrue(user.phone.endswith('901112233'))
+
+    def test_someone_elses_contact_is_rejected(self):
+        self.contact(self.owner.phone, owner_id=777)
+        self.assertFalse(CrmBotLink.objects.exists())

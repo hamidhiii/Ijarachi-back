@@ -83,7 +83,11 @@ TEXTS = {
         'link_expired': "Havola eskirgan. Kabinetda «Telegram'ni ulash» tugmasini qayta bosing: {url}",
         'stale': "Bron holati allaqachon o'zgargan — karta yangilandi.",
         'help': "➕ Yangi bron — bron yozish, 📅 Bugun — bugungi berish va qaytarishlar. Mahsulotlar, ombor va mijozlar — kabinetda.",
-        'start_hint': "Bu Rentoo prokatlari uchun CRM bot. «Kabinet» tugmasini bosing va kiring — bot o'zi ulanadi.",
+        'start_hint': "Bu Rentoo prokatlari uchun CRM bot. «📱 Raqamni yuborish» tugmasini bosing — bot va kabinet Rentoo akkauntingizga ulanadi, keyin kabinet o'zi kiradi.",
+        'btn_share': '📱 Raqamni yuborish',
+        'contact_not_own': "Faqat o'zingizning raqamingiz — pastdagi «📱 Raqamni yuborish» tugmasi orqali.",
+        'phone_bad': "Bu raqamni qabul qila olmaymiz. Kabinetga kod orqali kiring: {url}",
+        'disabled': "Bu raqamdagi akkaunt o'chirilgan.",
     },
     'ru': {
         'pickup_today': '📦 Сегодня выдать',
@@ -122,7 +126,11 @@ TEXTS = {
         'link_expired': 'Ссылка устарела. Нажмите «Подключить Telegram» в кабинете ещё раз: {url}',
         'stale': 'Статус брони уже изменился — карточка обновлена.',
         'help': '➕ Новая бронь — записать бронь, 📅 Сегодня — выдачи и возвраты на сегодня. Товары, склад и клиенты — в кабинете.',
-        'start_hint': 'Это CRM-бот для прокатов Rentoo. Нажмите «Кабинет» и войдите — бот подключится сам.',
+        'start_hint': 'Это CRM-бот для прокатов Rentoo. Нажмите «📱 Поделиться номером» — бот и кабинет подключатся к вашему аккаунту Rentoo, дальше кабинет будет входить сам.',
+        'btn_share': '📱 Поделиться номером',
+        'contact_not_own': 'Нужен ваш собственный номер — кнопкой «📱 Поделиться номером» внизу.',
+        'phone_bad': 'Этот номер принять не получилось. Войдите в кабинет по коду: {url}',
+        'disabled': 'Аккаунт с этим номером отключён.',
     },
 }
 
@@ -266,8 +274,7 @@ def handle_start(chat_id, from_user, text):
         if link is not None:
             send_today(chat_id, from_user)
         else:
-            api('sendMessage', {'chat_id': chat_id, 'text': t['start_hint'],
-                                'reply_markup': _cabinet_markup(lang)})
+            ask_contact(chat_id, lang)
         return
     # Ссылка одноразовая: забираем токен до привязки, второй переход не сработает.
     user_id = cache.get(INVITE_KEY.format(code))
@@ -285,6 +292,68 @@ def handle_start(chat_id, from_user, text):
     from .bot_booking import menu_keyboard
 
     api('sendMessage', {'chat_id': chat_id, 'text': t['linked'].format(name=_person(user)),
+                        'reply_markup': menu_keyboard(lang)})
+
+
+def ask_contact(chat_id, lang):
+    """Не подключён: одна кнопка «Поделиться номером» — дальше всё само."""
+    t = _t(lang)
+    api('sendMessage', {'chat_id': chat_id, 'text': t['start_hint'], 'reply_markup': {
+        'keyboard': [[{'text': t['btn_share'], 'request_contact': True}]],
+        'resize_keyboard': True, 'one_time_keyboard': True,
+    }})
+
+
+def handle_contact(chat_id, from_user, contact):
+    """
+    Номер по кнопке «Поделиться номером» (или WebApp.requestContact из кабинета).
+    Засчитывается только контакт самого отправителя: Telegram подтверждает, что
+    номер принадлежит этому аккаунту — то же доказательство, что у бота кодов.
+    Привязывает чат к аккаунту с этим номером (нет аккаунта — создаёт), и вход
+    в кабинет через Telegram дальше идёт сам (users.telegram_webapp.crm_user_for).
+    """
+    from django.contrib.auth import get_user_model
+
+    from apps.users.models import Profile
+    from apps.users.serializers import normalize_uz_phone
+
+    from_user = from_user or {}
+    lang = language(from_user.get('language_code'))
+    t = _t(lang)
+    sender = from_user.get('id')
+    if not sender or chat_id != sender or (contact or {}).get('user_id') != sender:
+        logger.warning('CRM bot: contact rejected in chat %s (contact user_id=%s, sender=%s)',
+                       chat_id, (contact or {}).get('user_id'), sender)
+        ask_contact(chat_id, lang)
+        api('sendMessage', {'chat_id': chat_id, 'text': t['contact_not_own']})
+        return
+    try:
+        phone = normalize_uz_phone(contact.get('phone_number', ''))
+    except Exception:
+        api('sendMessage', {'chat_id': chat_id, 'text': t['phone_bad'].format(url=_owner_url('/login')),
+                            'reply_markup': {'remove_keyboard': True}})
+        return
+
+    User = get_user_model()
+    user, created = User.objects.get_or_create(phone=phone)
+    if created:
+        Profile.objects.get_or_create(user=user)
+        logger.info('CRM bot: new user registered by contact: %s', user.pk)
+    if not user.is_active:
+        api('sendMessage', {'chat_id': chat_id, 'text': t['disabled'], 'reply_markup': {'remove_keyboard': True}})
+        return
+    CrmBotLink.objects.filter(chat_id=chat_id).exclude(user=user).delete()
+    CrmBotLink.objects.update_or_create(user=user, defaults={
+        'chat_id': chat_id, 'username': from_user.get('username') or '', 'language': lang,
+    })
+    logger.info('CRM bot linked by contact: user %s -> chat %s', user.pk, chat_id)
+    from .bot_booking import TEXTS as NB, menu_keyboard
+
+    user = User.objects.select_related('profile').get(pk=user.pk)
+    api('sendMessage', {'chat_id': chat_id, 'text': t['linked'].format(name=_person(user)),
+                        'reply_markup': _cabinet_markup(lang)})
+    # Нижние кнопки заменяют «Поделиться номером».
+    api('sendMessage', {'chat_id': chat_id, 'text': (NB.get(lang) or NB['uz'])['menu'],
                         'reply_markup': menu_keyboard(lang)})
 
 
@@ -485,7 +554,7 @@ def send_help(chat_id, from_user):
     lang = _remember_language(link, from_user)
     t = _t(lang)
     if link is None:
-        api('sendMessage', {'chat_id': chat_id, 'text': t['start_hint'], 'reply_markup': _cabinet_markup(lang)})
+        ask_contact(chat_id, lang)
         return
     from .bot_booking import TEXTS as NB, cabinet_button, menu_keyboard
 
