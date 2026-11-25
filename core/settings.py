@@ -91,6 +91,7 @@ INSTALLED_APPS = [
     'apps.monitoring',
     'apps.billing',
     'apps.crm',
+    'apps.support',
 ]
 
 MIDDLEWARE = [
@@ -181,6 +182,7 @@ REST_FRAMEWORK = {
         'phone_reveal_hour': config('THROTTLE_RATE_PHONE_REVEAL_HOUR', default='30/hour'),
         'phone_reveal_day': config('THROTTLE_RATE_PHONE_REVEAL_DAY', default='100/day'),
         'report': '20/hour',
+        'support': '30/hour',
     },
     # Exactly one reverse proxy (nginx) sits in front of Django here. Without
     # this, SimpleRateThrottle.get_ident() falls back to hashing the raw
@@ -481,6 +483,8 @@ TELEGRAM_WEBAPP_BOT_TOKEN = config('TELEGRAM_WEBAPP_BOT_TOKEN', default='')
 # возврате с кнопками, /bugun. Пусто — CRM-уведомления идут текстом через OTP-бот.
 CRM_BOT_TOKEN = config('CRM_BOT_TOKEN', default='')
 CRM_BOT_USERNAME = config('CRM_BOT_USERNAME', default='')
+# Техподдержка: Telegram id сотрудников (через запятую), им CRM-бот шлёт обращения.
+SUPPORT_TELEGRAM_CHAT_IDS = config('SUPPORT_TELEGRAM_CHAT_IDS', default='')
 # Если код не удалось отправить в Telegram (или номер ещё не привязан к боту) — падать в SMS
 OTP_SMS_FALLBACK_ENABLED = config('OTP_SMS_FALLBACK_ENABLED', default=False, cast=bool)
 

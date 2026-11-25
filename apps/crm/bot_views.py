@@ -7,6 +7,8 @@ from rest_framework import serializers
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from apps.support import telegram as support_bot
+
 from . import bot_booking as booking
 from . import telegram as bot
 from .access import OwnerAccountMixin
@@ -30,6 +32,8 @@ class CrmBotWebhookView(APIView):
 
         update = request.data or {}
         callback = update.get('callback_query')
+        if callback and support_bot.handle_callback(callback):
+            return HttpResponse(status=200)
         if callback:
             if not bot.handle_callback(callback):
                 bot.api('answerCallbackQuery', {'callback_query_id': callback.get('id')})
@@ -37,6 +41,9 @@ class CrmBotWebhookView(APIView):
 
         message = update.get('message') or {}
         chat = message.get('chat') or {}
+        # Реплай сотрудника поддержки на карточку обращения (apps.support).
+        if chat.get('type') == 'private' and message.get('reply_to_message') and support_bot.handle_reply(message):
+            return HttpResponse(status=200)
         text = message.get('text') or ''
         if chat.get('type') == 'private' and chat.get('id') and message.get('contact'):
             bot.handle_contact(chat['id'], message.get('from') or {}, message['contact'])
