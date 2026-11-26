@@ -81,7 +81,7 @@ def notify_user(ticket, text):
 
     base = settings.OWNER_FRONTEND_BASE_URL if ticket.source == SupportTicket.SOURCE_OWNER else settings.FRONTEND_BASE_URL
     transaction.on_commit(lambda: create_notification(ticket.user, Notification.TYPE_SYSTEM, {
-        'title': 'Ответ поддержки', 'message': text[:300], 'link': base.rstrip('/') + '/support',
+        'title': 'Ответ поддержки', 'message': text[:300], 'link': base.rstrip('/') + '/help',
     }))
 
 
