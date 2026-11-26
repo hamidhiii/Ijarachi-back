@@ -290,6 +290,11 @@ CELERY_BEAT_SCHEDULE = {
         'task': 'apps.billing.tasks.remind_subscriptions',
         'schedule': crontab(hour=10, minute=0),
     },
+    # Техподдержка: обращения без ответа — напоминание сотрудникам в Telegram.
+    'remind-support-tickets': {
+        'task': 'apps.support.tasks.remind_waiting_tickets',
+        'schedule': crontab(minute='*/10'),
+    },
 }
 
 # ─── Media & Static ───────────────────────────────────────────────────────────

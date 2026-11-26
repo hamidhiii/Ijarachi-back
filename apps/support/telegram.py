@@ -176,3 +176,62 @@ def handle_callback(callback):
             return True
     _api('answerCallbackQuery', {'callback_query_id': callback.get('id')})
     return True
+
+
+# ─── Напоминания: обращение не должно висеть незамеченным ───────────────────
+
+FIRST_REMINDER_MINUTES = 30
+REPEAT_REMINDER_HOURS = 3
+
+
+def _minutes(delta):
+    minutes = int(delta.total_seconds() // 60)
+    if minutes < 60:
+        return f'{minutes} мин'
+    hours, rest = divmod(minutes, 60)
+    return f'{hours} ч {rest} мин' if rest else f'{hours} ч'
+
+
+def remind_waiting(now=None):
+    """
+    Обращения, где последнее слово за человеком: первое напоминание через
+    30 минут без ответа, дальше — раз в 3 часа, пока не ответят или не закроют.
+    Возвращает число напоминаний.
+    """
+    from datetime import timedelta
+
+    now = now or timezone.now()
+    chats = agent_chat_ids()
+    if not chats:
+        return 0
+    sent = 0
+    tickets = SupportTicket.objects.filter(status=SupportTicket.STATUS_OPEN).select_related('user__profile')
+    for ticket in tickets:
+        last = ticket.messages.order_by('-created_at').first()
+        if last is None or last.from_staff:
+            continue
+        waiting = now - last.created_at
+        if waiting < timedelta(minutes=FIRST_REMINDER_MINUTES):
+            continue
+        if ticket.reminded_at and ticket.reminded_at > last.created_at \
+                and now - ticket.reminded_at < timedelta(hours=REPEAT_REMINDER_HOURS):
+            continue
+        text = '\n'.join([
+            f'⏰ Обращение #{ticket.pk} ждёт ответа {_minutes(waiting)}',
+            ticket.who(), '', last.text[:1500], '',
+            '↩️ Ответьте реплаем на это сообщение — ответ придёт человеку.',
+        ])
+        for chat_id in chats:
+            try:
+                result = _api('sendMessage', {'chat_id': chat_id, 'text': text[:4000],
+                                              'reply_markup': _card_markup(ticket.pk)})
+            except Exception:
+                logger.exception('Support: reminder for %s not delivered to %s', ticket.pk, chat_id)
+                continue
+            message_id = (result or {}).get('message_id')
+            if message_id:
+                SupportTelegramMessage.objects.get_or_create(chat_id=chat_id, message_id=message_id,
+                                                             defaults={'ticket': ticket})
+        SupportTicket.objects.filter(pk=ticket.pk).update(reminded_at=now)
+        sent += 1
+    return sent

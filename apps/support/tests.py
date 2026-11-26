@@ -108,3 +108,24 @@ class SupportTests(APITestCase):
         SupportTicket.objects.update(status=SupportTicket.STATUS_CLOSED, updated_at=timezone.now() - timedelta(days=4))
         self.post(text='Новый вопрос')
         self.assertEqual(SupportTicket.objects.count(), 2)
+
+    def test_waiting_ticket_is_reminded_then_again_later(self):
+        from datetime import timedelta
+
+        from django.utils import timezone
+
+        from apps.support.telegram import remind_waiting
+
+        user = make_user()
+        self.auth(user)
+        self.post(text='Ответьте, пожалуйста')
+        start = timezone.now()
+        self.assertEqual(remind_waiting(start + timedelta(minutes=10)), 0)
+        self.assertEqual(remind_waiting(start + timedelta(minutes=31)), 1)
+        self.assertIn('ждёт ответа', self.sent()[-1]['text'])
+        self.assertEqual(remind_waiting(start + timedelta(minutes=60)), 0)
+        self.assertEqual(remind_waiting(start + timedelta(hours=4)), 1)
+        # Ответили реплаем на напоминание — больше не напоминаем.
+        reminder_id = self.next_id
+        self.reply(reminder_id, 'Готово')
+        self.assertEqual(remind_waiting(start + timedelta(hours=9)), 0)

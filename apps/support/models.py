@@ -31,6 +31,7 @@ class SupportTicket(models.Model):
     # Гость видит свою переписку по этому ключу (хранится в его браузере).
     access_key = models.CharField(max_length=64, default=_key, unique=True, editable=False)
     page = models.CharField('Страница', max_length=300, blank=True)
+    reminded_at = models.DateTimeField('Последнее напоминание сотрудникам', null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
