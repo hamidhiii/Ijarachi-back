@@ -55,6 +55,51 @@ def _breakdown(rows, labels):
     return [{'key': code, 'label': label, 'value': found.get(code, 0)} for code, label in labels if found.get(code, 0)]
 
 
+# Сайты, которые «Обзор» показывает раздельно: витрина и кабинет прокатов.
+SITES = (('web', 'rentoo.uz'), ('owner', 'owner.rentoo.uz'))
+
+
+def _site_kpis(start, today, prev_start, prev_end, series):
+    """
+    По каждому сайту: посетители, вошедшие и входы по коду за период.
+
+    Посетители и вошедшие — из дневных HyperLogLog по сайту (presence.ping);
+    человек, открывавший оба сайта, считается в каждом. «Вошли по коду» —
+    разные телефоны с успешным входом или регистрацией с этого сайта.
+    Раздельный счёт идёт с 26.11.2026: раньше сайт не запоминался.
+    """
+    from .models import AuthEvent
+
+    logins = AuthEvent.objects.filter(event__in=[AuthEvent.LOGIN_OK, AuthEvent.REGISTER_OK])
+
+    def people(qs, since, until):
+        return (qs.filter(created_at__date__gte=since, created_at__date__lte=until)
+                .exclude(phone='').values('phone').distinct().count())
+
+    kpis = []
+    dates = _days(start, today)
+    for code, host in SITES:
+        group = f'site_{code}'
+        visitors = presence.daily_counts(f'hll:v:{code}', start, today)
+        active = presence.daily_counts(f'hll:u:{code}', start, today)
+        series[f'visitors_{code}'] = [visitors[d] for d in dates]
+        series[f'active_{code}'] = [active[d] for d in dates]
+        site_logins = logins.filter(source=code)
+        kpis += [
+            _kpi(f'visitors_{code}', 'Посетители', presence.unique_over(f'hll:v:{code}', start, today),
+                 presence.unique_over(f'hll:v:{code}', prev_start, prev_end),
+                 series=series[f'visitors_{code}'], group=group, hint=f'Разные устройства на {host}'),
+            _kpi(f'active_{code}', 'Вошедшие', presence.unique_over(f'hll:u:{code}', start, today),
+                 presence.unique_over(f'hll:u:{code}', prev_start, prev_end),
+                 series=series[f'active_{code}'], group=group, hint=f'Вошедшие, открывавшие {host}'),
+            _kpi(f'logins_{code}', 'Вошли по коду', people(site_logins, start, today),
+                 people(site_logins, prev_start, prev_end),
+                 series=_daily(site_logins.exclude(phone=''), 'created_at', start, today, Count('phone', distinct=True)), group=group,
+                 hint='Разные номера: вход или регистрация'),
+        ]
+    return kpis
+
+
 def overview(days, access):
     from apps.billing.models import BillingOrder, Plan, Subscription
     from apps.bookings.models import Booking
@@ -125,6 +170,7 @@ def overview(days, access):
              group='audience', hint='Вошедшие, открывавшие сайт'),
         _kpi('signups', 'Регистрации', signups, signups_prev, series=series['signups'], group='audience'),
         _kpi('users_total', 'Всего пользователей', users.count(), group='audience'),
+        *_site_kpis(start, today, prev_start, prev_end, series),
         _kpi('new_listings', 'Новые объявления', new_items, new_items_prev, series=series['listings'], group='market'),
         _kpi('live_listings', 'Опубликовано сейчас', items.filter(status=Item.STATUS_APPROVED).count(), group='market'),
         _kpi('moderation', 'На модерации', items.filter(status=Item.STATUS_PENDING).count(), group='market',

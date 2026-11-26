@@ -1,4 +1,5 @@
 import logging
+from urllib.parse import urlsplit
 
 from .models import AuthEvent
 
@@ -12,13 +13,28 @@ def _client_ip(request):
     return ip or None
 
 
-def record(request, event, phone='', detail=''):
+def site_of(request):
+    """
+    С какого сайта запрос: owner.rentoo.uz → owner, иначе web. Оба фронта ходят
+    в API через свой же домен (/backend/), а браузер ставит Origin на каждый
+    POST — по нему и различаем. Без Origin смотрим Referer; Mini App передаёт
+    источник явно (source=tma).
+    """
+    header = request.META.get('HTTP_ORIGIN') or request.META.get('HTTP_REFERER') or ''
+    host = (urlsplit(header).hostname or '').lower()
+    return AuthEvent.SOURCE_OWNER if host.startswith('owner.') else AuthEvent.SOURCE_WEB
+
+
+def record(request, event, phone='', detail='', source=None):
     """Записать шаг входа. Аналитика не должна ронять вход, поэтому ошибки глотаем."""
     try:
         data = getattr(request, 'data', None) or {}
         visitor_id = str(data.get('visitor_id') or request.META.get('HTTP_X_VISITOR_ID') or '')[:64]
+        if source not in dict(AuthEvent.SOURCE_CHOICES):
+            source = site_of(request)
         AuthEvent.objects.create(
             event=event,
+            source=source,
             phone=(phone or '')[:20],
             visitor_id=visitor_id,
             ip=_client_ip(request),

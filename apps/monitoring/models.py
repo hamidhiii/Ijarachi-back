@@ -117,7 +117,18 @@ class AuthEvent(models.Model):
         VERIFY_FAILED, VERIFY_INVALID_INPUT, CLIENT_ERROR,
     )
 
+    SOURCE_WEB = 'web'
+    SOURCE_OWNER = 'owner'
+    SOURCE_TMA = 'tma'
+    SOURCE_CHOICES = [
+        (SOURCE_WEB, 'rentoo.uz'),
+        (SOURCE_OWNER, 'owner.rentoo.uz'),
+        (SOURCE_TMA, 'Telegram Mini App'),
+    ]
+
     event = models.CharField('Событие', max_length=30, choices=EVENT_CHOICES)
+    # С какого сайта пришёл шаг (см. events.site_of). Пусто — записи до 26.11.2026.
+    source = models.CharField('Сайт', max_length=10, choices=SOURCE_CHOICES, blank=True)
     phone = models.CharField('Телефон', max_length=20, blank=True)
     visitor_id = models.CharField('Посетитель', max_length=64, blank=True, db_index=True)
     ip = models.GenericIPAddressField('IP', null=True, blank=True)

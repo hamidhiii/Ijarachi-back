@@ -44,9 +44,10 @@ class PingView(APIView):
         if not presence.valid_visitor(visitor):
             return Response({'detail': 'visitor_id'}, status=400)
         user_id = _user_id(request)
-        if presence.ping(visitor, str(request.data.get('source') or 'web'), user_id):
+        source = str(request.data.get('source') or 'web')
+        if presence.ping(visitor, source, user_id):
             # Первый заход за день — шаг «Зашёл на сайт» в воронке входа.
-            events.record(request, AuthEvent.VISIT, detail=str(request.data.get('source') or '')[:20])
+            events.record(request, AuthEvent.VISIT, detail=source[:20], source=source)
         return Response(status=204)
 
 

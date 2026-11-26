@@ -10,6 +10,7 @@
     presence:src:<src>    ZSET  visitor → время (web / owner / tma)
     hll:v:<YYYYMMDD>      HyperLogLog уникальных посетителей за день (120 дней)
     hll:u:<YYYYMMDD>      HyperLogLog уникальных вошедших за день (DAU)
+    hll:v:<src>:<YYYYMMDD>, hll:u:<src>:<YYYYMMDD>  то же по сайту (web / owner / tma)
     peak:<YYYYMMDD>       максимум «онлайн сейчас» за день
 
 «Онлайн» — пинг за последние ONLINE_SECONDS. Первый пинг посетителя за день
@@ -58,10 +59,16 @@ def ping(visitor_id, source='web', user_id=None):
         pipe.zadd(f'presence:src:{source}', {visitor_id: now})
         pipe.pfadd(f'hll:v:{day}', visitor_id)
         pipe.expire(f'hll:v:{day}', DAY_TTL)
+        # По сайту отдельно: rentoo.uz и owner.rentoo.uz — разные аудитории,
+        # а общий счётчик их смешивает (один человек на обоих — в каждом по разу).
+        pipe.pfadd(f'hll:v:{source}:{day}', visitor_id)
+        pipe.expire(f'hll:v:{source}:{day}', DAY_TTL)
         if user_id:
             pipe.zadd('presence:u', {str(user_id): now})
             pipe.pfadd(f'hll:u:{day}', str(user_id))
             pipe.expire(f'hll:u:{day}', DAY_TTL)
+            pipe.pfadd(f'hll:u:{source}:{day}', str(user_id))
+            pipe.expire(f'hll:u:{source}:{day}', DAY_TTL)
         # Первый пинг посетителя за сегодня.
         pipe.set(f'visit:{day}:{visitor_id}', 1, nx=True, ex=2 * 24 * 3600)
         result = pipe.execute()

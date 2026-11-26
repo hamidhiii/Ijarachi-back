@@ -289,6 +289,7 @@ class TelegramWebAppLoginView(APIView):
             AuthEvent.REGISTER_OK if is_new else AuthEvent.LOGIN_OK,
             phone=user.phone,
             detail='telegram_webapp' if crm_user is None else 'telegram_webapp_crm',
+            source=AuthEvent.SOURCE_TMA,
         )
         _link_crm_bot(str(request.data.get('init_data') or ''), tg_user, user)
 
