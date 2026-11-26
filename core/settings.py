@@ -182,7 +182,8 @@ REST_FRAMEWORK = {
         'phone_reveal_hour': config('THROTTLE_RATE_PHONE_REVEAL_HOUR', default='30/hour'),
         'phone_reveal_day': config('THROTTLE_RATE_PHONE_REVEAL_DAY', default='100/day'),
         'report': '20/hour',
-        'support': '30/hour',
+        # Живой чат: 20 сообщений в минуту хватает человеку и останавливает флуд.
+        'support': config('THROTTLE_RATE_SUPPORT', default='20/min'),
     },
     # Exactly one reverse proxy (nginx) sits in front of Django here. Without
     # this, SimpleRateThrottle.get_ident() falls back to hashing the raw
