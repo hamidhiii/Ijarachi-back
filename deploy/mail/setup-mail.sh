@@ -112,6 +112,10 @@ namespace inbox {
     special_use = \Trash
     auto = subscribe
   }
+  mailbox Archive {
+    special_use = \Archive
+    auto = subscribe
+  }
 }
 EOF
 
