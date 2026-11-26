@@ -78,13 +78,14 @@ def save_reservation(account, data, *, instance=None, actor=None):
 
     if new_status in Reservation.OCCUPYING_STATUSES:
         if quantity > item.quantity:
-            raise CrmError('NOT_ENOUGH_STOCK', f'В объявлении всего {item.quantity} шт.', status.HTTP_409_CONFLICT, free=item.quantity)
+            raise CrmError('NOT_ENOUGH_STOCK', f'В объявлении всего {item.quantity} шт.', status.HTTP_409_CONFLICT,
+                            free=item.quantity, total=item.quantity, over_total=True)
         free = free_units(item, start, end, exclude_reservation=instance)
         if quantity > free:
             raise CrmError(
                 'NOT_ENOUGH_STOCK',
                 f'На эти даты свободно {free} шт. из {item.quantity}.',
-                status.HTTP_409_CONFLICT, free=free,
+                status.HTTP_409_CONFLICT, free=free, total=item.quantity,
             )
 
     client = client_for(account, data.get('client'), data.get('client_name', ''), data.get('client_phone', ''))

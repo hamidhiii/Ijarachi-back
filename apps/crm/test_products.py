@@ -240,3 +240,41 @@ class NewBookingDialogTests(APITestCase):
         self.text('привет')
         self.assertIn('Новая бронь', self.calls[0][1]['text'])
         self.assertFalse(Client.objects.exists())
+
+
+class CabinetUxTests(APITestCase):
+    """Фильтр «активные», поиск по броням, удаление товара."""
+
+    def setUp(self):
+        self.owner = make_user()
+        give_plan(self.owner, Plan.START)
+        self.client.force_authenticate(self.owner)
+        self.item = make_item(self.owner, quantity=5, status=Item.STATUS_CRM)
+        today = timezone.localdate()
+        aziz = Client.objects.create(owner=self.owner, name='Азиз', phone='+998935551122')
+        self.active = Reservation.objects.create(owner=self.owner, item=self.item, client=aziz, quantity=1,
+                                                 start_date=today, end_date=today + timedelta(days=1))
+        Reservation.objects.create(owner=self.owner, item=self.item, quantity=1, start_date=today,
+                                   end_date=today, status=Reservation.STATUS_CANCELLED)
+
+    def ids(self, **params):
+        return [r['id'] for r in self.client.get(reverse('owner-reservations'), params).json()['results']]
+
+    def test_active_filter_and_search(self):
+        self.assertEqual(self.ids(status='active'), [self.active.pk])
+        self.assertEqual(len(self.ids()), 2)
+        self.assertEqual(self.ids(q='Азиз'), [self.active.pk])
+        self.assertEqual(self.ids(q='555-11'), [self.active.pk])
+        self.assertEqual(self.ids(q='никого'), [])
+
+    def test_delete_product_needs_no_active_bookings(self):
+        url = reverse('owner-listing-detail', args=[self.item.pk])
+        busy = self.client.delete(url)
+        self.assertEqual((busy.status_code, busy.json()['code']), (409, 'HAS_ACTIVE_RESERVATIONS'))
+        self.active.status = Reservation.STATUS_RETURNED
+        self.active.save()
+        self.assertEqual(self.client.delete(url).status_code, 204)
+        self.item.refresh_from_db()
+        self.assertEqual(self.item.status, Item.STATUS_INACTIVE)
+        self.assertEqual(self.client.get(reverse('owner-stock')).json(), [])
+        self.assertEqual(Reservation.objects.count(), 2)  # история осталась

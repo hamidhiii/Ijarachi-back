@@ -169,13 +169,28 @@ class OwnerListingsView(OwnerAccountMixin, generics.ListCreateAPIView):
         item.free_today = item.quantity
 
 
-class OwnerListingDetailView(OwnerAccountMixin, generics.RetrieveUpdateAPIView):
+class OwnerListingDetailView(OwnerAccountMixin, generics.RetrieveUpdateDestroyAPIView):
     """
     GET/PATCH /owner/listings/{id}/ — товар: количество, цена, залог, точка (PRO);
     у товара «только в кабинете» — также название, описание, категория и адрес.
+    DELETE — убрать товар: снимается с Rentoo и из остатков (история броней
+    остаётся). С активными бронями — 409 `HAS_ACTIVE_RESERVATIONS`.
     """
     serializer_class = OwnerListingSerializer
-    http_method_names = ['get', 'patch']
+    http_method_names = ['get', 'patch', 'delete']
+
+    def perform_destroy(self, instance):
+        active = instance.reservations.filter(
+            status__in=Reservation.OCCUPYING_STATUSES, end_date__gte=timezone.localdate(),
+        ).count()
+        if active:
+            raise CrmError('HAS_ACTIVE_RESERVATIONS',
+                           f'У товара {active} активных броней — сначала завершите или отмените их.',
+                           status.HTTP_409_CONFLICT, active=active)
+        if instance.status == Item.STATUS_BLOCKED:
+            return
+        instance.status = Item.STATUS_INACTIVE
+        instance.save(update_fields=['status', 'updated_at'])
 
     def get_queryset(self):
         return Item.objects.filter(owner=self.account).prefetch_related('images')
@@ -379,9 +394,22 @@ class ReservationListCreateView(OwnerAccountMixin, generics.ListCreateAPIView):
             qs = qs.filter(end_date__gte=_parse_day(params['from'], None))
         if params.get('to'):
             qs = qs.filter(start_date__lte=_parse_day(params['to'], None))
-        for param, field in (('listing', 'item_id'), ('status', 'status'), ('branch', 'item__branch_id'), ('client', 'client_id')):
+        status_param = params.get('status', '')
+        if status_param == 'active':
+            # Брони, которые ещё в работе: забронировано и выдано.
+            qs = qs.filter(status__in=Reservation.OCCUPYING_STATUSES)
+        elif status_param:
+            qs = qs.filter(status__in=[s for s in status_param.split(',') if s])
+        for param, field in (('listing', 'item_id'), ('branch', 'item__branch_id'), ('client', 'client_id')):
             if params.get(param):
                 qs = qs.filter(**{field: params[param]})
+        q = params.get('q', '').strip()
+        if q:
+            digits = ''.join(ch for ch in q if ch.isdigit())
+            match = Q(client__name__icontains=q) | Q(item__title__icontains=q) | Q(notes__icontains=q)
+            if len(digits) >= 3:
+                match |= Q(client__phone__contains=digits)
+            qs = qs.filter(match)
         return qs
 
     def perform_create(self, serializer):
@@ -420,7 +448,7 @@ class ClientListCreateView(OwnerAccountMixin, generics.ListCreateAPIView):
     def get_queryset(self):
         qs = Client.objects.filter(owner=self.account).annotate(
             reservations_count=Count('reservations', filter=~Q(reservations__status=Reservation.STATUS_CANCELLED)),
-            last_reservation=Max('reservations__start_date'),
+            last_reservation=Max('reservations__start_date', filter=~Q(reservations__status=Reservation.STATUS_CANCELLED)),
         )
         query = self.request.query_params.get('q')
         if query:
@@ -444,7 +472,7 @@ class ClientDetailView(OwnerAccountMixin, generics.RetrieveUpdateDestroyAPIView)
     def get_queryset(self):
         return Client.objects.filter(owner=self.account).annotate(
             reservations_count=Count('reservations', filter=~Q(reservations__status=Reservation.STATUS_CANCELLED)),
-            last_reservation=Max('reservations__start_date'),
+            last_reservation=Max('reservations__start_date', filter=~Q(reservations__status=Reservation.STATUS_CANCELLED)),
         )
 
 
