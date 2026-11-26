@@ -4,9 +4,12 @@ POST /api/v1/support/messages/   {"text", "source": "web"|"owner", "name"?, "pho
 
 Вошедший пользователь — по сессии. Гость — по ключу обращения в заголовке
 X-Support-Key (его отдаёт первый POST; сайт хранит его у себя). Закрытое
-обращение не продолжается: следующее сообщение открывает новое.
+меньше 3 дней назад обращение открывается снова; более старое — новое обращение.
 """
+from datetime import timedelta
+
 from django.db import transaction
+from django.utils import timezone
 from rest_framework import permissions, serializers, status
 from rest_framework.response import Response
 from rest_framework.throttling import ScopedRateThrottle
@@ -40,6 +43,11 @@ def _ticket_json(ticket, with_key=False):
     return data
 
 
+# Закрытое недавно обращение продолжается (открывается снова), а не плодит новое:
+# закрыли случайно или человек дописал «спасибо» — переписка остаётся одной.
+REOPEN_WITHIN = timedelta(days=3)
+
+
 def _current(request, open_only=False):
     qs = SupportTicket.objects.prefetch_related('messages')
     if request.user and request.user.is_authenticated:
@@ -50,7 +58,7 @@ def _current(request, open_only=False):
             return None
         qs = qs.filter(access_key=key, user__isnull=True)
     if open_only:
-        qs = qs.exclude(status=SupportTicket.STATUS_CLOSED)
+        qs = qs.exclude(status=SupportTicket.STATUS_CLOSED, updated_at__lt=timezone.now() - REOPEN_WITHIN)
     return qs.order_by('-updated_at').first()
 
 

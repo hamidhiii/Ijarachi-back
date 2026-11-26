@@ -8,6 +8,7 @@ import logging
 
 from django.conf import settings
 from django.db import transaction
+from django.utils import timezone
 
 from .models import SupportMessage, SupportTelegramMessage, SupportTicket
 
@@ -43,6 +44,10 @@ def _card(ticket, message, first):
     return '\n'.join(lines)[:4000]
 
 
+def _card_markup(pk):
+    return {'inline_keyboard': [[{'text': '✅ Закрыть обращение', 'callback_data': f'{PREFIX}:close:{pk}'}]]}
+
+
 def notify_agents(message, first=False):
     """Отправить сообщение пользователя сотрудникам (после коммита)."""
     def send():
@@ -51,9 +56,7 @@ def notify_agents(message, first=False):
             try:
                 result = _api('sendMessage', {
                     'chat_id': chat_id, 'text': _card(ticket, message, first),
-                    'reply_markup': {'inline_keyboard': [[
-                        {'text': '✅ Закрыть обращение', 'callback_data': f'{PREFIX}:close:{ticket.pk}'},
-                    ]]},
+                    'reply_markup': _card_markup(ticket.pk),
                 })
             except Exception:
                 logger.exception('Support: could not deliver ticket %s to %s', ticket.pk, chat_id)
@@ -146,10 +149,30 @@ def handle_callback(callback):
         _api('answerCallbackQuery', {'callback_query_id': callback.get('id')})
         return True
     parts = data.split(':')
-    if len(parts) == 3 and parts[1] == 'close' and parts[2].isdigit():
-        updated = SupportTicket.objects.filter(pk=int(parts[2])).update(status=SupportTicket.STATUS_CLOSED)
-        _api('answerCallbackQuery', {'callback_query_id': callback.get('id'),
-                                     'text': f'Обращение #{parts[2]} закрыто' if updated else 'Не найдено'})
-        return True
+    message = callback.get('message') or {}
+    if len(parts) == 3 and parts[2].isdigit():
+        pk = int(parts[2])
+        if parts[1] == 'close':
+            # Одно касание не закрывает: кнопка под каждой карточкой, промахнуться легко.
+            _api('answerCallbackQuery', {'callback_query_id': callback.get('id')})
+            _api('editMessageReplyMarkup', {'chat_id': chat_id, 'message_id': message.get('message_id'), 'reply_markup': {
+                'inline_keyboard': [[
+                    {'text': f'Да, закрыть #{pk}', 'callback_data': f'{PREFIX}:closeyes:{pk}'},
+                    {'text': '← Не закрывать', 'callback_data': f'{PREFIX}:keep:{pk}'},
+                ]]}})
+            return True
+        if parts[1] == 'closeyes':
+            updated = SupportTicket.objects.filter(pk=pk).update(status=SupportTicket.STATUS_CLOSED, updated_at=timezone.now())
+            logger.info('Support: ticket %s closed from Telegram by %s', pk, sender)
+            _api('answerCallbackQuery', {'callback_query_id': callback.get('id'),
+                                         'text': f'Обращение #{pk} закрыто' if updated else 'Не найдено'})
+            _api('editMessageReplyMarkup', {'chat_id': chat_id, 'message_id': message.get('message_id'),
+                                            'reply_markup': {'inline_keyboard': []}})
+            return True
+        if parts[1] == 'keep':
+            _api('answerCallbackQuery', {'callback_query_id': callback.get('id')})
+            _api('editMessageReplyMarkup', {'chat_id': chat_id, 'message_id': message.get('message_id'),
+                                            'reply_markup': _card_markup(pk)})
+            return True
     _api('answerCallbackQuery', {'callback_query_id': callback.get('id')})
     return True

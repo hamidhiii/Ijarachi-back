@@ -86,9 +86,25 @@ class SupportTests(APITestCase):
         self.post(text='Вопрос')
         self.reply(101, 'чужой ответ', sender=777)
         self.assertFalse(SupportMessage.objects.filter(from_staff=True).exists())
-        self.webhook({'callback_query': {'id': 'c', 'data': 'sup:close:%d' % SupportTicket.objects.get().pk,
-                                         'from': {'id': AGENT},
-                                         'message': {'message_id': 101, 'chat': {'id': AGENT, 'type': 'private'}}}})
+        pk = SupportTicket.objects.get().pk
+
+        def press(data):
+            self.webhook({'callback_query': {'id': 'c', 'data': data, 'from': {'id': AGENT},
+                                             'message': {'message_id': 101, 'chat': {'id': AGENT, 'type': 'private'}}}})
+
+        press('sup:close:%d' % pk)  # одно касание — только вопрос
+        self.assertEqual(SupportTicket.objects.get().status, SupportTicket.STATUS_OPEN)
+        press('sup:closeyes:%d' % pk)
         self.assertEqual(SupportTicket.objects.get().status, SupportTicket.STATUS_CLOSED)
+
+        # Дописал сразу после закрытия — то же обращение, снова открыто.
+        self.post(text='И ещё вопрос')
+        self.assertEqual(SupportTicket.objects.count(), 1)
+        self.assertEqual(SupportTicket.objects.get().status, SupportTicket.STATUS_OPEN)
+
+        # Закрыто давно — новое обращение.
+        from datetime import timedelta
+        from django.utils import timezone
+        SupportTicket.objects.update(status=SupportTicket.STATUS_CLOSED, updated_at=timezone.now() - timedelta(days=4))
         self.post(text='Новый вопрос')
         self.assertEqual(SupportTicket.objects.count(), 2)
