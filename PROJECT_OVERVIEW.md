@@ -252,10 +252,30 @@ Web Push: `endpoint` подписки — только HTTPS к push-серви�
   сумма в тийинах, ответ всегда HTTP 200, Basic `Paycom:<PAYME_SECRET_KEY>`.
   Одна транзакция на заказ (вторая — -31052), не проведённая за 12 ч
   отменяется (reason 4), проведённую не отменяем (-31007: услуга выдана).
+  CheckPerformTransaction отдаёт фискальный чек `detail` (`receipt_type` 0, одна
+  позиция: `title` на узбекском, `price` = сумма заказа в тийинах, `count` 1,
+  `code` = MXIK, `package_code`, `vat_percent`) — из `PAYME_FISCAL_*`, у
+  продвижения можно задать свои MXIK и единицу (`*_PROMO`). Сумма позиций
+  сверяется с суммой заказа, расхождение — -31001.
 - **Click** `POST /api/v1/billing/click/prepare/` и `/complete/` —
   [apps/billing/click.py](apps/billing/click.py): `merchant_trans_id` = id заказа,
   сумма в сумах, подпись md5 (у Complete с `merchant_prepare_id`); повторный
   Complete — «уже оплачен» (-4), ошибка Click в Complete отменяет заказ (-9).
+
+**Подключение Payme на сервере (деплой):**
+1. nginx `back.rentoo.uz`: `location ~ ^/api/v1/billing/(payme|click)/` с
+   `auth_basic off` — Payme шлёт свой `Authorization: Basic Paycom:<ключ>`, и
+   Basic Auth nginx отвечает ему 401. Блок — как у `/api/v1/payments/(payme|click)/`.
+2. Кабинет Payme: endpoint `https://back.rentoo.uz/api/v1/billing/payme/`,
+   поле счёта `order_id`.
+3. `.env`: `PAYME_MERCHANT_ID` (ID кассы), `PAYME_SECRET_KEY` (сначала тестовый
+   ключ песочницы, потом боевой), `PAYME_FISCAL_MXIK`, `PAYME_FISCAL_PACKAGE_CODE`
+   (единица привязана к MXIK — tasnif.soliq.uz/attribute/<MXIK>),
+   `PAYME_FISCAL_VAT_PERCENT`, при необходимости `PAYME_FISCAL_*_PROMO`;
+   `PAYMENTS_MODE=live` (включает и Click — без его ключей кнопка Click не работает).
+4. `docker compose restart web celery celery-beat` — переменные читаются при старте.
+5. Песочница Payme (test.paycom.uz) прогоняет все методы по endpoint; без MXIK
+   платёж пройдёт, но в логе предупреждение и чек не попадёт в налоговую.
 
 Перед списанием (Check/Create, Prepare) заказ проверяется ещё раз: не отменён,
 тариф всё ещё можно купить. Если тариф ниже действующего всё же оплатили (две

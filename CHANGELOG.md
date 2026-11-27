@@ -2,6 +2,18 @@
 
 Заметные изменения бэкенда Rentoo. Карта проекта — [PROJECT_OVERVIEW.md](PROJECT_OVERVIEW.md).
 
+## 2026-11-27 — фискальный чек Payme
+
+- `CheckPerformTransaction` (`/api/v1/billing/payme/`) возвращает `detail` для
+  чека в налоговую: `receipt_type` 0 и одна позиция — `title` на узбекском
+  («Rentoo START tarifi — 1 oy», «Rentoo e'lonni TOPga ko'tarish — 7 kun»,
+  «Rentoo VIP e'lon — 30 kun»), `price` в тийинах, `count` 1, `code` (MXIK),
+  `package_code`, `vat_percent`. Сумма позиций сверяется с суммой заказа.
+- Новые настройки: `PAYME_FISCAL_MXIK`, `PAYME_FISCAL_PACKAGE_CODE`,
+  `PAYME_FISCAL_VAT_PERCENT`; для продвижения — `PAYME_FISCAL_MXIK_PROMO` и
+  `PAYME_FISCAL_PACKAGE_CODE_PROMO` (пусто — как у тарифа). Без MXIK — предупреждение в логе.
+- Порядок подключения Payme на сервере — PROJECT_OVERVIEW.md, §6c.
+
 ## [Unreleased] — доска объявлений с платными тарифами
 
 Ветка `feat/listing-board` (поверх `feat/shop-account`). ТЗ от 16.11.2026.

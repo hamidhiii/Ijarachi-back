@@ -149,7 +149,7 @@ class PaymeTests(APITestCase):
         self.assertEqual(body['error']['code'], -32504)
 
     def test_full_payment(self):
-        self.assertEqual(self.rpc('CheckPerformTransaction', self.account())['result'], {'allow': True})
+        self.assertIs(self.rpc('CheckPerformTransaction', self.account())['result']['allow'], True)
         created = self.rpc('CreateTransaction', self.account(id='tx1', time=1))['result']
         self.assertEqual(created['state'], 1)
         # Повтор Create с тем же id — тот же ответ.

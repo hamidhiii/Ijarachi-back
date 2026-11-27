@@ -418,6 +418,17 @@ PAYMENTS_MODE = config(
 PAYME_MERCHANT_ID = config('PAYME_MERCHANT_ID', default='')
 PAYME_SECRET_KEY = config('PAYME_SECRET_KEY', default='')
 
+# Фискальные данные чека Payme (CheckPerformTransaction → detail): без них чек
+# не попадает в оборот налоговой. MXIK и код единицы измерения — по каталогу
+# tasnif.soliq.uz (единица привязана к MXIK), НДС — процент (0, если ИП не
+# плательщик НДС). Продвижению можно задать свой MXIK и единицу; по умолчанию
+# они те же, что у тарифа.
+PAYME_FISCAL_MXIK = config('PAYME_FISCAL_MXIK', default='')
+PAYME_FISCAL_PACKAGE_CODE = config('PAYME_FISCAL_PACKAGE_CODE', default='')
+PAYME_FISCAL_VAT_PERCENT = config('PAYME_FISCAL_VAT_PERCENT', default=0, cast=int)
+PAYME_FISCAL_MXIK_PROMO = config('PAYME_FISCAL_MXIK_PROMO', default='')
+PAYME_FISCAL_PACKAGE_CODE_PROMO = config('PAYME_FISCAL_PACKAGE_CODE_PROMO', default='')
+
 CLICK_SERVICE_ID = config('CLICK_SERVICE_ID', default='')
 CLICK_MERCHANT_ID = config('CLICK_MERCHANT_ID', default='')
 CLICK_SECRET_KEY = config('CLICK_SECRET_KEY', default='')

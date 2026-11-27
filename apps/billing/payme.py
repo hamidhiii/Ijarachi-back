@@ -1,7 +1,8 @@
 """
 Payme Merchant API (JSON-RPC 2.0) для заказов: тарифы и продвижение.
 
-Счёт — `account.order_id`, сумма — в тийинах. Протокол:
+Счёт — `account.order_id`, сумма — в тийинах. CheckPerformTransaction
+отдаёт фискальные данные чека (detail) — см. receipt_detail. Протокол:
 CheckPerformTransaction → CreateTransaction → PerformTransaction, отмена —
 CancelTransaction; CheckTransaction и GetStatement — сверка. Ответ всегда
 HTTP 200, ошибка — в поле error. Транзакция, не проведённая за 12 часов,
@@ -118,12 +119,55 @@ def _check_payable(order, params):
         raise PaymeError(ERR_ORDER_UNAVAILABLE, 'order_id')
 
 
+def receipt_title(order):
+    """Название позиции в чеке — узбекский, латиница: что куплено и на какой срок."""
+    from .promotions import promotion_days
+
+    if order.kind == BillingOrder.KIND_PLAN:
+        days = settings.BILLING_PERIOD_DAYS
+        term = '1 oy' if days == 30 else f'{days} kun'
+        return f'Rentoo {order.plan.get_code_display()} tarifi — {term}'
+    days = promotion_days(order.promotion)
+    if order.promotion == BillingOrder.PROMO_VIP:
+        return f"Rentoo VIP e'lon — {days} kun"
+    return f"Rentoo e'lonni TOPga ko'tarish — {days} kun"
+
+
+def receipt_detail(order):
+    """
+    Фискальный чек для CheckPerformTransaction: одна позиция на заказ.
+    price × count обязаны точно совпасть с amount транзакции, иначе Payme
+    отклонит платёж, — поэтому цена берётся из той же суммы заказа, что и
+    проверка amount, а несовпадение — ошибка у нас, а не у покупателя.
+    """
+    code, package_code = settings.PAYME_FISCAL_MXIK, settings.PAYME_FISCAL_PACKAGE_CODE
+    if order.kind == BillingOrder.KIND_PROMOTION:
+        # Свой MXIK/единица у продвижения, если заданы; иначе — как у тарифа.
+        code = settings.PAYME_FISCAL_MXIK_PROMO or code
+        package_code = settings.PAYME_FISCAL_PACKAGE_CODE_PROMO or package_code
+    items = [{
+        'title': receipt_title(order),
+        'price': order.amount_tiyin,
+        'count': 1,
+        'code': code,
+        'package_code': package_code,
+        'vat_percent': settings.PAYME_FISCAL_VAT_PERCENT,
+    }]
+    total = sum(item['price'] * item['count'] for item in items)
+    if total != order.amount_tiyin:
+        raise PaymeError(ERR_AMOUNT)
+    if not items[0]['code'] or not items[0]['package_code']:
+        # Платёж пройдёт, но чек не попадёт в налоговую — заметно в логах.
+        logger.warning('Payme: не задан MXIK или код единицы (PAYME_FISCAL_*) — заказ #%s', order.pk)
+    return {'receipt_type': 0, 'items': items}
+
+
 def check_perform_transaction(params):
     order = _order_for(params)
     _check_payable(order, params)
     if order.provider_state == BillingOrder.PAYME_CREATED:
         raise PaymeError(ERR_ORDER_BUSY, 'order_id')
-    return {'allow': True}
+    return {'allow': True, 'detail': receipt_detail(order)}
 
 
 def _tx(params, lock=True):
